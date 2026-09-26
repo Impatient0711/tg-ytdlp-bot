@@ -262,10 +262,24 @@ def admins() -> list:
     return sorted(set(out))
 
 
+def _call(app, coro, timeout=25):
+    """متدِ async کلاینت را از تردِ سینک اجرا می‌کند و *نتیجه* را برمی‌گرداند.
+
+    ⚠️ در این پروژه هندلرها در executor اجرا می‌شوند؛ صدا زدنِ خامِ
+    ``app.get_chat(...)`` فقط یک کوروتینِ never-awaited می‌دهد (نه خطا) ⇒
+    نتیجه همیشه خالی می‌شد. (همان تله‌ای که قبلاً کیبورد را آپدیت نمی‌کرد.)
+    """
+    try:
+        from HELPERS.safe_messeger import run_pyrogram_client_coroutine
+        return run_pyrogram_client_coroutine(app, coro, timeout=timeout)
+    except Exception:
+        return None
+
+
 def admin_name(app, uid: int) -> str:
     """نامِ نمایشیِ یک ادمین (اختیاری — برای زیباییِ فهرست)."""
     try:
-        chat = app.get_chat(int(uid))
+        chat = _call(app, app.get_chat(int(uid)))
         name = " ".join(x for x in (getattr(chat, "first_name", ""),
                                     getattr(chat, "last_name", "") or "") if x).strip()
         if name:
@@ -294,7 +308,7 @@ def resolve_user(app, raw: str):
     if not val:
         return 0, "", "نام کاربری نامعتبر"
     try:
-        chat = app.get_chat("@" + val)
+        chat = _call(app, app.get_chat("@" + val))
         uid = int(getattr(chat, "id", 0) or 0)
         if uid <= 0:
             return 0, "", "کاربر پیدا نشد"
