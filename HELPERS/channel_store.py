@@ -18,6 +18,13 @@ import time
 from CONFIG.config import Config
 from HELPERS.logger import logger
 
+# ⚠️ f48: Cloudflare جلوی User-Agent پیش‌فرضِ python-urllib را می‌گیرد
+#    (error code: 1010 ⇒ HTTP 403 Forbidden) — حتی با توکنِ درست.
+#    با یک User-Agent معمولی، همان توکن بدونِ مشکل کار می‌کند.
+RAILWAY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+
 _LOCK = threading.Lock()
 _FILE_NAME = "channels.json"
 
@@ -406,7 +413,8 @@ def railway_sync() -> tuple:
         req = urllib.request.Request(
             "https://backboard.railway.com/graphql/v2",
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + token,
+                     "User-Agent": RAILWAY_UA, "Accept": "application/json"},
             method="POST")
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8", "replace") or "{}")

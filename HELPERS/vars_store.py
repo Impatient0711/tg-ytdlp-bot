@@ -23,6 +23,12 @@ from CONFIG.config import Config
 from HELPERS.logger import logger
 
 RAILWAY_GQL = "https://backboard.railway.com/graphql/v2"
+# ⚠️ f48: Cloudflare جلوی User-Agent پیش‌فرضِ python-urllib را می‌گیرد
+#    (error code: 1010 ⇒ HTTP 403 Forbidden) — حتی با توکنِ درست.
+#    با یک User-Agent معمولی، همان توکن بدونِ مشکل کار می‌کند.
+RAILWAY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
 BACKUP_FILE = "railway-variables.env"
 
 # حالتِ گفتگو برای هر کاربر: {user_id: {"action": "set_value"|"choose_set"|"choose_del"|"add", "name": str}}
@@ -75,7 +81,8 @@ def _gql(query: str, variables: dict = None) -> tuple:
     try:
         req = urllib.request.Request(
             RAILWAY_GQL, data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok,
+                     "User-Agent": RAILWAY_UA, "Accept": "application/json"},
             method="POST")
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8", "replace") or "{}")

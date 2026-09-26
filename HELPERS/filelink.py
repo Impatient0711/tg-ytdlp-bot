@@ -29,6 +29,13 @@ from CONFIG.config import Config
 from HELPERS import filelink_routes as fr
 from HELPERS.logger import logger
 
+# ⚠️ f48: Cloudflare جلوی User-Agent پیش‌فرضِ python-urllib را می‌گیرد
+#    (error code: 1010 ⇒ HTTP 403 Forbidden) — حتی با توکنِ درست.
+#    با یک User-Agent معمولی، همان توکن بدونِ مشکل کار می‌کند.
+RAILWAY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+
 # ─────────────────────────── تنظیمات ───────────────────────────
 TTL_OPTIONS = [("30m", 1800, "۳۰ دقیقه"), ("1h", 3600, "۱ ساعت"),
                ("6h", 21600, "۶ ساعت"), ("24h", 86400, "۲۴ ساعت")]
@@ -134,7 +141,8 @@ def _domain_from_api() -> str:
         req = urllib.request.Request(
             "https://backboard.railway.com/graphql/v2",
             data=json.dumps({"query": q, "variables": {"s": sid}}).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok,
+                     "User-Agent": RAILWAY_UA, "Accept": "application/json"},
             method="POST")
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8", "replace") or "{}")
