@@ -321,12 +321,16 @@ def panel(app, copied=None) -> tuple:
                  "Railway → Variables (تا در ریلویِ بعدی دستی اضافه نکنی).")
     lines.append("🧩 <b>متغیرها</b> = فهرست/بکاپِ <u>کلِ</u> متغیرهای ربات + ویرایش و حذف "
                  "از همین‌جا.")
+    lines.append("👤 <b>ادمین‌ها</b> = هر کسی که اینجا باشد، دکمه‌های مدیریتی را می‌بیند "
+                 "و فیلم را به کانال‌ها می‌فرستد؛ از همان دکمه هم اضافه/حذف می‌شود.")
     lines.append("☁️ <b>ذخیره در Variables</b> = خودِ ربات مقدار را از API ریلوی می‌نویسد "
                  "(سرویس یک بار ری‌استارت می‌شود).")
     rows.append([InlineKeyboardButton("➕ افزودن کانال", callback_data="chadd"),
                  InlineKeyboardButton("🔄 بررسیِ ادمین‌بودن", callback_data="chrefresh")])
     rows.append([InlineKeyboardButton("💾 بکاپِ کانال‌ها", callback_data="chbackup"),
                  InlineKeyboardButton("☁️ ذخیره در Variables", callback_data="chcloudsync")])
+    # 👤 f47: دسترسیِ یک‌ضربه‌ای به پنلِ ادمین‌ها از همین صفحه
+    rows.append([InlineKeyboardButton("👤 ادمین‌ها (افزودن/حذف)", callback_data="vadm")])
     rows.append([InlineKeyboardButton("📌 بکاپِ ضروری", callback_data="vess"),
                  InlineKeyboardButton("🧩 متغیرها (بکاپِ کل)", callback_data="vmenu")])
     return "\n".join(lines), _kb(rows)

@@ -167,7 +167,7 @@ def panel(show_full: bool = False) -> tuple:
     vars_, source, warn = variables()
     text = list_text(vars_, source, show_full, warn)
     rows = [
-        [InlineKeyboardButton("👤 ادمین‌ها", callback_data="vadm")],
+        [InlineKeyboardButton("👤 ادمین‌ها (افزودن/حذف)", callback_data="vadm")],
         [InlineKeyboardButton("📌 بکاپِ ضروری (برای ران‌شدن)", callback_data="vess")],
         [InlineKeyboardButton("📤 بکاپِ کلِ متغیرها (فایل)", callback_data="vbackup"),
          InlineKeyboardButton("🔓 نمایشِ کامل" if not show_full else "🔒 حالتِ پوشیده",
@@ -318,6 +318,29 @@ def admin_list_text(app=None) -> str:
     return "\n".join(lines)
 
 
+def admins_panel(app=None) -> tuple:
+    """(متن, کیبورد) پنلِ ادمین‌ها — یک منبعِ واحد برای دکمهٔ کیبورد، پنلِ متغیرها
+    و پنلِ کانال‌ها (f47)."""
+    from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = []
+    for a_uid in admins():
+        rows.append([InlineKeyboardButton("🗑 حذف %d" % a_uid,
+                                          callback_data="vadmrm|%d" % a_uid)])
+    rows.append([InlineKeyboardButton("➕ افزودن ادمین", callback_data="vadmadd")])
+    rows.append([InlineKeyboardButton("📌 بکاپِ ضروری", callback_data="vess"),
+                 InlineKeyboardButton("🧩 متغیرها", callback_data="vmenu")])
+    rows.append([InlineKeyboardButton("🔄 به‌روزرسانی", callback_data="vadm"),
+                 InlineKeyboardButton("✖️ بستن", callback_data="vclose")])
+    return admin_list_text(app), InlineKeyboardMarkup(rows)
+
+
+def send_admins_panel(app, uid) -> None:
+    """پنلِ ادمین‌ها را برای کاربر می‌فرستد (مسیرِ متنی، بدونِ callback)."""
+    from HELPERS.safe_messeger import safe_send_message
+    text, kb = admins_panel(app)
+    safe_send_message(uid, text, reply_markup=kb)
+
+
 def add_admin(app, value: str) -> tuple:
     """ادمین اضافه می‌کند: آیدیِ عددی یا @نام‌کاربری یا t.me/…"""
     uid, name, err = resolve_user(app, value)
@@ -376,6 +399,16 @@ ESSENTIAL_TITLES = {
 }
 
 
+def _digits(raw) -> list:
+    """آیدی‌های عددیِ داخلِ یک مقدارِ متنی («1, 2؛ 3») ⇒ [1, 2, 3]."""
+    out = []
+    for part in str(raw or "").replace(";", ",").replace("؛", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
 def essential(app=None) -> tuple:
     """(متنِ آمادهٔ پیست, فایلِ .env, شمارِ حذف‌شده‌ها, فهرستِ حذف‌شده‌ها)"""
     vars_, _source, _warn = variables()
@@ -391,6 +424,17 @@ def essential(app=None) -> tuple:
             keys = cs.admin_keys(app)
             if keys:
                 keep[name] = ",".join(keys)
+            continue
+        if name == "ADMIN":
+            # 👤 f47 (خواستهٔ کاربر: «تو بکاپ وریبل ادمین هم باشه») — خطِ ADMIN همیشه
+            #    در بکاپ هست و فهرستِ همین‌لحظه (Config.ADMIN) با مقدارِ ریلوی
+            #    یکی می‌شود؛ پس ادمینی که همین حالا اضافه شده هم داخلش است.
+            merged = []
+            for x in list(admins()) + _digits(vars_.get(name)):
+                if x not in merged:
+                    merged.append(x)
+            if merged:
+                keep[name] = ",".join(str(x) for x in merged)
             continue
         val = vars_.get(name)
         if val:
@@ -414,6 +458,9 @@ def essential(app=None) -> tuple:
     msg += ["</pre>", ""]
     for name in ESSENTIAL:
         msg.append("• <b>%s</b> — %s" % (name, ESSENTIAL_TITLES.get(name, "")))
+    if "ADMIN" not in keep:
+        msg += ["", "⚠️ خطِ <code>ADMIN</code> خالی است — آیدیِ عددیِ خودت را بگذار "
+                    "(وگرنه پنل‌های مدیریتی برای هیچ‌کس باز نمی‌شود)."]
     if "COPY_CHANNEL_ID" not in keep:
         msg += ["", "⚠️ کانالی که ربات در آن ادمین باشد پیدا نشد ⇒ خطِ "
                     "<code>COPY_CHANNEL_ID</code> خالی است."]
@@ -430,6 +477,9 @@ def essential(app=None) -> tuple:
 
 LABELS = {"📢 کانال‌ها", "کانال‌ها", "📢 کانالها", "کانالها",
           "🧩 متغیرها", "متغیرها", "🧩 متغیرها / وریبل‌ها"}
+
+# 👤 f47: برچسب‌های «ادمین‌ها» — اینها پنلِ ادمین‌ها را باز می‌کنند (نه پنلِ متغیرها)
+ADMIN_LABELS = {"👤 ادمین‌ها", "👤 ادمینها", "ادمین‌ها", "ادمینها", "ادمین ها"}
 
 
 def _clear(uid):
@@ -486,6 +536,16 @@ def handle_vars_text(app, message) -> bool:
         return False
     head = text.lower().split()[0].split("@")[0]
     label = text.replace("\u200c", "").strip()
+
+    # ۰) 👤 f47: دکمهٔ «👤 ادمین‌ها» در کیبوردِ پایین ⇒ پنلِ ادمین‌ها (افزودن/حذف)
+    if label in ADMIN_LABELS:
+        from HELPERS.safe_messeger import safe_send_message
+        if not is_admin(uid):
+            safe_send_message(uid, "⛔️ این بخش فقط برای مدیرِ ربات است.")
+            return True
+        _clear(uid)
+        send_admins_panel(app, uid)
+        return True
 
     # ۱) دستور/برچسبِ بازکردنِ پنل
     if head in ("/vars", "/var", "/variables", "/env") or label in LABELS - {"📢 کانال‌ها", "کانال‌ها"}:

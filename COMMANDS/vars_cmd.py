@@ -82,15 +82,10 @@ def vadm_callback(app, cq):
         return True
     uid = int(cq.message.chat.id)
     cq.answer("⏳")
-    text = vs.admin_list_text(app)
-    rows = []
-    for a_uid in vs.admins():
-        rows.append([InlineKeyboardButton("🗑 حذف %d" % a_uid, callback_data="vadmrm|%d" % a_uid)])
-    rows.append([InlineKeyboardButton("➕ افزودن ادمین", callback_data="vadmadd")])
-    rows.append([InlineKeyboardButton("🔄 به‌روزرسانی", callback_data="vadm")])
-    rows.append([InlineKeyboardButton("✖️ بستن", callback_data="vclose")])
-    from pyrogram.types import InlineKeyboardMarkup
-    safe_send_message(uid, text, reply_markup=InlineKeyboardMarkup(rows))
+    # f47: همان پنلِ مشترک (vars_store.admins_panel) — هم از این دکمه، هم از
+    #      دکمهٔ کیبوردِ پایین، هم از پنلِ کانال‌ها.
+    text, kb = vs.admins_panel(app)
+    safe_send_message(uid, text, reply_markup=kb)
     return True
 
 
