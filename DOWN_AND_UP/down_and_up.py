@@ -799,47 +799,74 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
         from HELPERS.safe_messeger import read_flood_wait_remaining, _write_flood_wait_file
         flood_remaining, flood_time_str = read_flood_wait_remaining(user_id)
 
-        # Send rate-limit message FIRST — if edit gets FloodWait, user sees this notice
-        if flood_remaining is not None:
-            proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
-        else:
-            proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG, message=message)
-
-        # Try to replace with "Download started" to confirm no FloodWait
+        # ادمین: نه پیامِ «Telegram has limited message sending»، نه پروبِ FloodWait
         try:
-            if proc_msg is not None and hasattr(proc_msg, 'id'):
-                app.edit_message_text(
-                    chat_id=user_id,
-                    message_id=proc_msg.id,
-                    text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG,
-                    parse_mode=enums.ParseMode.HTML
-                )
-                try:
-                    from HELPERS.safe_messeger import schedule_delete_message
-                    download_started_msg_id = proc_msg.id
-                    schedule_delete_message(user_id, download_started_msg_id, delete_after_seconds=5)
-                except Exception:
-                    pass
+            from HELPERS.flood_guard import bypass_enabled as _flood_bypass
+            _admin_flood_free = _flood_bypass(user_id)
+        except Exception:
+            _admin_flood_free = False
+        if not _admin_flood_free:
+            # Send rate-limit message FIRST — if edit gets FloodWait, user sees this notice
+            if flood_remaining is not None:
+                proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
             else:
-                logger.error(f"[FLOOD-CHECK] proc_msg is not Message: type={type(proc_msg)}, value={proc_msg}")
-        except FloodWait as e:
-            _write_flood_wait_file(user_id, e.value)
-            return
-        except Exception as e:
-            err_str = str(e)
-            if "MESSAGE_ID_INVALID" in err_str:
-                logger.debug(f"[FLOOD-CHECK] edit_message_text MESSAGE_ID_INVALID (message already deleted): {e}")
-            else:
-                logger.error(f"[FLOOD-CHECK] edit_message_text failed: {e}, proc_msg type={type(proc_msg)}")
+                proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG, message=message)
+
+            # Try to replace with "Download started" to confirm no FloodWait
+            try:
+                if proc_msg is not None and hasattr(proc_msg, 'id'):
+                    app.edit_message_text(
+                        chat_id=user_id,
+                        message_id=proc_msg.id,
+                        text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG,
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    try:
+                        from HELPERS.safe_messeger import schedule_delete_message
+                        download_started_msg_id = proc_msg.id
+                        schedule_delete_message(user_id, download_started_msg_id, delete_after_seconds=5)
+                    except Exception:
+                        pass
+                else:
+                    logger.error(f"[FLOOD-CHECK] proc_msg is not Message: type={type(proc_msg)}, value={proc_msg}")
+            except FloodWait as e:
+                _write_flood_wait_file(user_id, e.value)
+                return
+            except Exception as e:
+                err_str = str(e)
+                if "MESSAGE_ID_INVALID" in err_str:
+                    logger.debug(f"[FLOOD-CHECK] edit_message_text MESSAGE_ID_INVALID (message already deleted): {e}")
+                else:
+                    logger.error(f"[FLOOD-CHECK] edit_message_text failed: {e}, proc_msg type={type(proc_msg)}")
 
         # If there is no flood error, send a normal message
-        proc_msg = app.send_message(user_id, safe_get_messages(user_id).PROCESSING_MSG, reply_parameters=ReplyParameters(message_id=message.id))
+        # ── دکمه‌های کنترلِ دانلود (❌ لغو / 🔄 ادامه) روی پیامِ دانلود ──
+        _dlctl_markup = None
+        try:
+            from HELPERS.download_controls import (register_controls as _dlctl_register,
+                                                   install_restarter as _dlctl_restarter,
+                                                   keyboard as _dlctl_keyboard)
+            _dlctl_register(user_id, kind="video", url=url)
+            # «ادامه» همین تابع را دوباره اجرا می‌کند؛ yt-dlp با .part از همان‌جا ادامه می‌دهد
+            _dlctl_restarter(user_id, lambda: down_and_up(
+                app, message, url, playlist_name, video_count, video_start_with, tags_text,
+                force_no_title=force_no_title, format_override=format_override,
+                quality_key=quality_key, cookies_already_checked=True, use_proxy=use_proxy))
+            _dlctl_markup = _dlctl_keyboard(user_id)
+        except Exception as _dlctl_err:
+            logger.debug(f"[DLCTL] setup failed (video): {_dlctl_err}")
+        proc_msg = app.send_message(user_id, safe_get_messages(user_id).PROCESSING_MSG, reply_parameters=ReplyParameters(message_id=message.id), reply_markup=_dlctl_markup)
         # Pin proc/status message for visibility
         try:
             app.pin_chat_message(user_id, proc_msg.id, disable_notification=True)
         except Exception:
             pass
         proc_msg_id = proc_msg.id
+        # شناسهٔ پیامِ دانلود را ثبت کن تا دکمه‌های لغو/ادامه روی همان بمانند
+        try:
+            _dlctl_register(user_id, kind="video", url=url, message_id=proc_msg_id)
+        except Exception:
+            pass
         error_message = ""
         hls_file_found = False  # Initialize hls_file_found for HLS stream handling
         status_msg = None
@@ -1213,6 +1240,12 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
             # Check the timeout
             if check_download_timeout(user_id):
                 raise Exception(f"Download timeout exceeded ({safe_get_messages(user_id).DOWNLOAD_TIMEOUT // 3600} hours)")
+            # ثبتِ پیشرفت برای نگهبانِ «گیرکردنِ دانلود» (دکمهٔ 🔄 ادامه)
+            try:
+                from HELPERS.download_controls import touch as _dlctl_touch_fn
+                _dlctl_touch_fn(user_id, "download")
+            except Exception:
+                pass
             current_time = time.time()
             
             def build_progress_metadata(downloaded_bytes, total_bytes):
@@ -5657,6 +5690,22 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
         elif "Download timeout exceeded" in str(e):
             send_to_user(message, safe_get_messages(user_id).DOWNLOAD_CANCELLED_TIMEOUT_MSG)
             log_error_to_channel(message, LoggerMsg.DOWNLOAD_TIMEOUT_LOG, url)
+            # تایم‌اوت = دانلود ناتمام؛ فایلِ نیمه‌کاره بماند و «🔄 ادامه» پیشنهاد شود
+            try:
+                from HELPERS.download_controls import offer_resume as _dlctl_offer, keep_partials as _dlctl_keep
+                if not _dlctl_keep(user_id):
+                    _dlctl_offer(user_id, message,
+                                 lambda: down_and_up(app, message, url, playlist_name, video_count,
+                                                     video_start_with, tags_text,
+                                                     force_no_title=force_no_title,
+                                                     format_override=format_override,
+                                                     quality_key=quality_key,
+                                                     cookies_already_checked=True,
+                                                     use_proxy=use_proxy),
+                                 url=url, kind="video", reason=str(e),
+                                 msg_id=proc_msg_id)
+            except Exception as _dlctl_err:
+                logger.debug(f"[DLCTL] offer_resume (timeout) failed: {_dlctl_err}")
         elif "'quality_key'" in str(e):
             # Quality_key errors are non-critical and should be completely ignored
             logger.info(f"quality_key error ignored (non-critical): {e}")
@@ -5678,10 +5727,35 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
                     logger.info(f"[SUBS] End of task: cleared {cleared} subtitle cache entries for user={user_id}")
                 except Exception as _e:
                     logger.debug(f"[SUBS] Failed to clear end cache: {_e}")
+        elif "cancelled by user" in (str(e) or "").lower():
+            # لغو با دکمهٔ «❌ لغو دانلود» (یا /clean): پیامِ روشن، بدونِ پیشنهادِ ادامه
+            logger.info(f"[DLCTL] download cancelled by user {user_id}")
+            try:
+                from HELPERS.download_controls import clear_for as _dlctl_clear_for
+                _dlctl_clear_for(user_id, proc_msg_id)
+            except Exception:
+                pass
+            send_to_user(message, "🛑 دانلود لغو شد.")
         else:
             logger.error(f"Error in video download: {e}")
             error_msg = str(e) if e else "Unknown error"
             send_to_user(message, safe_get_messages(user_id).FAILED_DOWNLOAD_VIDEO_MSG.format(error=error_msg))
+            # دانلود ناتمام ماند: فایلِ نیمه‌کاره نگه داشته می‌شود و «🔄 ادامه» پیشنهاد می‌شود
+            try:
+                from HELPERS.download_controls import offer_resume as _dlctl_offer, keep_partials as _dlctl_keep
+                if not _dlctl_keep(user_id):
+                    _dlctl_offer(user_id, message,
+                                 lambda: down_and_up(app, message, url, playlist_name, video_count,
+                                                     video_start_with, tags_text,
+                                                     force_no_title=force_no_title,
+                                                     format_override=format_override,
+                                                     quality_key=quality_key,
+                                                     cookies_already_checked=True,
+                                                     use_proxy=use_proxy),
+                                 url=url, kind="video", reason=error_msg,
+                                 msg_id=proc_msg_id)
+            except Exception as _dlctl_err:
+                logger.debug(f"[DLCTL] offer_resume failed: {_dlctl_err}")
         
         # Immediate cleanup of temporary status messages on error
         try:
@@ -5704,6 +5778,13 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
         # Always unregister cancel event to prevent memory leaks
         try:
             unregister_download_cancel_event(user_id, _cancel_ev)
+        except Exception:
+            pass
+        # پایانِ کار: دکمه‌های «❌ لغو / 🔄 ادامه» از پیامِ دانلود برداشته می‌شوند
+        # (اگر «ادامه» پیشنهاد شده باشد، دکمه‌ها می‌مانند)
+        try:
+            from HELPERS.download_controls import finish as _dlctl_finish
+            _dlctl_finish(user_id)
         except Exception:
             pass
         # Always stop hourglass animation to prevent resource leaks

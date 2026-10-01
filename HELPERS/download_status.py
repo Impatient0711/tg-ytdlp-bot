@@ -117,15 +117,42 @@ def check_download_timeout(user_id):
     return False
 
 # Helper function to safely get active download status
-def _adaptive_interval(elapsed_seconds):
+def _adaptive_interval(elapsed_seconds, user_id=None):
     """Calculate adaptive update interval based on elapsed time.
     
     0-4 min: 3s, 5-9: 4s, 10-14: 5s, ... 55-59: 14s, 60+: 90s.
+    ادمین: ×۳ و حداقل ۱۰ ثانیه ⇒ فشارِ FloodWait کمتر (ADMIN_LOW_FLOOD_MODE).
     """
     minutes_passed = int(elapsed_seconds // 60)
     if minutes_passed >= 60:
-        return 90.0
-    return 3.0 + max(0, minutes_passed // 5)
+        base = 90.0
+    else:
+        base = 3.0 + max(0, minutes_passed // 5)
+    try:
+        from HELPERS.flood_guard import low_flood_mode
+        if user_id is not None and low_flood_mode(user_id):
+            return max(base * 3.0, 10.0)
+    except Exception:
+        pass
+    return base
+
+
+def _dlctl_markup(user_id):
+    """kwargs آماده برای دکمه‌های «❌ لغو» و «🔄 ادامه» روی پیام‌های دانلود/پیشرفت."""
+    try:
+        from HELPERS.download_controls import markup_kwargs
+        return markup_kwargs(user_id)
+    except Exception:
+        return {}
+
+
+def _dlctl_touch(user_id, phase="download"):
+    """علامت‌گذاریِ پیشرفت برای نگهبانِ «گیرکردنِ دانلود»."""
+    try:
+        from HELPERS.download_controls import touch
+        touch(user_id, phase)
+    except Exception:
+        pass
 
 
 def get_active_download(user_id):
@@ -228,7 +255,7 @@ def start_hourglass_animation(user_id, hourglass_msg_id, stop_anim):
                 
                 minutes_passed = int(elapsed // 60)
                 
-                interval = _adaptive_interval(elapsed)
+                interval = _adaptive_interval(elapsed, user_id)
                 
                 if current_time - last_update < interval:
                     time.sleep(1.0)
@@ -236,7 +263,7 @@ def start_hourglass_animation(user_id, hourglass_msg_id, stop_anim):
                 
                 emoji = emojis[counter % len(emojis)]
                 # Attempt to edit message but don't keep trying if message is invalid
-                result = safe_edit_message_text(user_id, hourglass_msg_id, f"{emoji} {messages.DOWNLOAD_STATUS_PLEASE_WAIT_MSG}")
+                result = safe_edit_message_text(user_id, hourglass_msg_id, f"{emoji} {messages.DOWNLOAD_STATUS_PLEASE_WAIT_MSG}", **_dlctl_markup(user_id))
 
                 # If message edit returns None due to MESSAGE_ID_INVALID, stop animation
                 if result is None and counter > 0:  # Allow first attempt to fail
@@ -310,7 +337,7 @@ def start_cycle_progress(user_id, proc_msg_id, current_total_process, user_dir_n
                 
                 minutes_passed = int(elapsed // 60)
                 
-                interval = _adaptive_interval(elapsed)
+                interval = _adaptive_interval(elapsed, user_id)
                 
                 if current_time - last_update < interval:
                     time.sleep(1.0)
@@ -340,12 +367,12 @@ def start_cycle_progress(user_id, proc_msg_id, current_total_process, user_dir_n
                     blocks = int(percent // 10)
                     bar = "🟩" * blocks + "⬜️" * (10 - blocks)
                     result = safe_edit_message_text(user_id, proc_msg_id,
-                        f"{current_total_process}\n{messages.DOWNLOAD_STATUS_DOWNLOADING_HLS_MSG}\n{bar}   {percent:.1f}%")
+                        f"{current_total_process}\n{messages.DOWNLOAD_STATUS_DOWNLOADING_HLS_MSG}\n{bar}   {percent:.1f}%", **_dlctl_markup(user_id))
                 else:
                     # Fallback to fragment-based animation
                     bar = "🟩" * counter + "⬜️" * (10 - counter)
                     result = safe_edit_message_text(user_id, proc_msg_id,
-                        f"{current_total_process}\n{messages.DOWNLOAD_STATUS_DOWNLOADING_HLS_MSG} {frag_text}\n{bar}")
+                        f"{current_total_process}\n{messages.DOWNLOAD_STATUS_DOWNLOADING_HLS_MSG} {frag_text}\n{bar}", **_dlctl_markup(user_id))
 
                 # If message was deleted (returns None), stop animation
                 if result is None and counter > 2:  # Allow first few attempts to fail
@@ -400,12 +427,21 @@ def progress_bar(*args):
         user_id, msg_id, status_text = args[5], args[6], args[7]
     else:
         user_id, msg_id, status_text = args[2], args[3], args[4]
-    # Throttle to avoid flood: update at most once per second per message
+    _dlctl_touch(user_id, "upload")  # آپلود هم نشانهٔ زنده‌بودنِ دانلود است
+    # Throttle to avoid flood: default at most once per second per message.
+    # ادمین: فاصلهٔ بیشتر (ADMIN_PROGRESS_EDIT_INTERVAL با ADMIN_LOW_FLOOD_MODE)
     now = time.time()
     key = (user_id, msg_id)
+    _min_edit_gap = 1.0
+    try:
+        from HELPERS.flood_guard import low_flood_mode, progress_edit_interval
+        if low_flood_mode(user_id):
+            _min_edit_gap = progress_edit_interval()
+    except Exception:
+        pass
     with _last_upload_ts_lock:
         last_ts = _last_upload_update_ts.get(key, 0)
-    if now - last_ts < 1.0 and current < total:
+    if now - last_ts < _min_edit_gap and current < total:
         return
 
     # Log upload activity every 10 seconds to prevent watchdog false positives
@@ -424,7 +460,7 @@ def progress_bar(*args):
         blocks = int(percent // 10)
         bar = "🟩" * blocks + "⬜️" * (10 - blocks)
         text = f"{status_text}\n{bar}   {percent:.1f}%"
-        safe_edit_message_text(user_id, msg_id, text)
+        safe_edit_message_text(user_id, msg_id, text, **_dlctl_markup(user_id))
         with _last_upload_ts_lock:
             _last_upload_update_ts[key] = now
     except Exception as e:

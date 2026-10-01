@@ -1182,12 +1182,23 @@ def send_videos(
                         if isinstance(e, FloodWait):
                             wait_time = e.value
                             flood_wait_retries -= 1
-                            if wait_time <= 120 and flood_wait_retries > 0:
+                            # ادمین: انتظارِ خودکارِ بلند (ADMIN_FLOOD_AUTO_WAIT_MAX) بدونِ بلاکِ FloodWait
+                            _auto_wait_max = 120
+                            try:
+                                from HELPERS.flood_guard import bypass_enabled as _flood_bypass, admin_auto_wait_max
+                                if _flood_bypass(user_id):
+                                    _auto_wait_max = max(_auto_wait_max, admin_auto_wait_max())
+                            except Exception:
+                                pass
+                            if wait_time <= _auto_wait_max and flood_wait_retries > 0:
                                 wait_time_safe = wait_time + 1
                                 logger.warning(f"FloodWait received ({wait_time}s), waiting {wait_time_safe}s... ({flood_wait_retries} retries left)")
                                 try:
-                                    safe_edit_message_text(user_id, msg_id,
-                                        f"⏳ FloodWait {wait_time}s — auto-retrying...")
+                                    _retry_note = f"⏳ FloodWait {wait_time}s — auto-retrying..."
+                                    if _auto_wait_max > 120:
+                                        _retry_note = (f"⏳ FloodWait {wait_time}s — "
+                                                       f"ادمین: خودکار صبر می‌کنم و بعد ادامه می‌دهم…")
+                                    safe_edit_message_text(user_id, msg_id, _retry_note)
                                 except Exception:
                                     pass
                                 time.sleep(wait_time_safe)

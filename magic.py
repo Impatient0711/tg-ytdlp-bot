@@ -76,6 +76,9 @@ set_app(app)
 # منطبق می‌ایستد؛ پس ترتیبِ ایمپورت = ترتیبِ اولویت).
 from COMMANDS.filelink_cmd import *
 
+# دکمه‌های کنترلِ دانلود (❌ لغو / 🔄 ادامه): هندلرِ callback بعد از ساختِ app ثبت می‌شود
+from HELPERS.download_controls import *  # noqa: F401,F403
+
 # Кэш для username бота (будет заполнен после старта)
 _bot_username_cache = None
 

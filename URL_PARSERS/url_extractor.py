@@ -94,6 +94,63 @@ def is_command_separated(text: str, command: str) -> bool:
     
     return True
 
+# ── لینک‌های بدونِ اسکیم («example.com/d/abc» ⇒ «https://example.com/d/abc») ──
+_BARE_URL_RE = re.compile(
+    r"(?<![\w@./-])"
+    r"((?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?::\d{1,5})?)"
+    r"(/[^\s<>\"']*)?"
+)
+
+
+def _known_hosts() -> set:
+    """دامنه‌هایی که «بی‌مسیر» هم لینک حساب می‌شوند (دامنهٔ خودِ ربات)."""
+    import urllib.parse as _up
+    hosts = set()
+    items = []
+    for key in ("LINK_BASE_URL", "PUBLIC_URL", "RAILWAY_PUBLIC_DOMAIN", "LINK_ALT_DOMAINS", "WEBHOOK_URL"):
+        items.append((os.environ.get(key) or "").strip())
+    try:
+        items.append(str(getattr(Config, "LINK_BASE_URL", "") or ""))
+    except Exception:
+        pass
+    try:
+        from HELPERS.filelink_routes import load as _fl_load
+        for rec in (_fl_load() or {}).values():
+            for u in (rec.get("url"), rec.get("link"), rec.get("public_url")):
+                items.append(str(u or ""))
+    except Exception:
+        pass
+    for item in items:
+        for part in re.split(r"[,\s]+", item or ""):
+            part = part.strip()
+            if not part:
+                continue
+            if "://" not in part:
+                part = "https://" + part
+            try:
+                h = (_up.urlparse(part).hostname or "").lower()
+            except Exception:
+                h = ""
+            if h:
+                hosts.add(h)
+    return hosts
+
+
+def _expand_schemeless_url(text: str) -> str:
+    """اولین لینکِ بدونِ اسکیم را https می‌کند و متنِ کامل را برمی‌گرداند (وگرنه '')."""
+    if not text or ("http://" in text) or ("https://" in text):
+        return ""
+    known = _known_hosts()
+    for m in _BARE_URL_RE.finditer(text):
+        host = (m.group(1) or "").lower()
+        path = m.group(2) or ""
+        bare_host = host.split(":")[0]
+        if path or host in known or bare_host in known:
+            start, end = m.span(1)
+            return text[:start] + "https://" + text[start:end] + text[end:]
+    return ""
+
+
 @app.on_message(filters.text & filters.private)
 @reply_with_keyboard
 @background_handler(label="url_distractor")
@@ -1196,6 +1253,15 @@ def url_distractor(app, message):
     # 2) On failure, fallback to gallery-dl (/img handler)
     # Используем обновленный message.text, если он был изменен
     final_text = message.text if hasattr(message, 'text') and message.text else text
+    # ── لینکِ بدونِ اسکیم: کاربر غالباً «دامنه/مسیر» را کپی می‌کند، نه «https://…» ──
+    try:
+        if final_text and ("http://" not in final_text) and ("https://" not in final_text):
+            _fixed = _expand_schemeless_url(final_text)
+            if _fixed:
+                final_text = _fixed
+                logger.info(f"URL_EXTRACTOR: لینکِ بدونِ اسکیم ⇒ {_fixed[:140]}")
+    except Exception as _bare_err:
+        logger.error(f"URL_EXTRACTOR: schemeless expand failed: {_bare_err}")
     if ("https://" in final_text) or ("http://" in final_text):
         if not is_user_blocked(message):
             # "Защита от дурака": ранний отказ для явно неподдерживаемых типов файлов
@@ -1262,6 +1328,7 @@ def url_distractor(app, message):
                         _cdn_host = (_cdn_parsed.hostname or '').lower()
                         if _cdn_host:
                             from CONFIG.domains import DomainsConfig as _DC
+                            from HELPERS.direct_link import is_media_file_url as _dl_is_media_file
                             # Defensive access (issue #400): some production builds
                             # deploy url_extractor.py ahead of CONFIG/domains.py, so
                             # the CDN_REJECT_DOMAINS attribute may be absent. A missing
@@ -1274,6 +1341,15 @@ def url_distractor(app, message):
                             for _cdn_domain in (_cdn_reject_domains or []):
                                 _cdn_domain_lower = _cdn_domain.lower().strip()
                                 if _cdn_host == _cdn_domain_lower or _cdn_host.endswith('.' + _cdn_domain_lower):
+                                    # استثنا: فایلِ خامِ مدیا (مثل .../segment1.ts یا ....mp4) روی همین
+                                    # دامنه‌ها حالا با مسیرِ «لینکِ مستقیم» دانلود می‌شود ⇒ بلاک نکن.
+                                    try:
+                                        if _cdn_parsed.path and _dl_is_media_file(raw_url):
+                                            logger.info(f"URL_EXTRACTOR: allowing raw media file on CDN "
+                                                        f"domain '{_cdn_domain}' (direct-link path): {raw_url}")
+                                            break
+                                    except Exception as _cdn_allow_err:
+                                        logger.debug(f"URL_EXTRACTOR: CDN allow-check failed: {_cdn_allow_err}")
                                     logger.info(f"URL_EXTRACTOR: blocking raw CDN domain '{_cdn_domain}' for URL '{raw_url}'")
                                     _cdn_err_msg = (
                                         f"❌ <b>This is a raw CDN URL, not a video page.</b>\n\n"
@@ -1320,6 +1396,19 @@ def url_distractor(app, message):
                     return
             except Exception as ext_check_error:
                 logger.error(f"URL_EXTRACTOR: failed to apply unsupported extension guard: {ext_check_error}")
+
+            # ── لینکِ مستقیم (فایلِ خام): دانلودِ خودمان با نمایشِ پیشرفت و
+            #    پشتیبانیِ «❌ لغو» و «🔄 ادامه» (به‌جای سپردنِ آن به yt-dlp) ──
+            try:
+                import re as _dl_re
+                _dl_match = _dl_re.search(r"https?://\S+", final_text or "")
+                _dl_url = _dl_match.group(0) if _dl_match else ""
+                if _dl_url:
+                    from HELPERS.direct_link import maybe_handle_direct_link
+                    if maybe_handle_direct_link(app, message, _dl_url, user_id):
+                        return
+            except Exception as _dl_err:
+                logger.error(f"URL_EXTRACTOR: direct-link handler failed: {_dl_err}")
 
             # Check rate limit before processing URL
             from HELPERS.rate_limiter import check_rate_limit

@@ -276,6 +276,23 @@ https://<دامنهٔ-سرویس>/d/<token>/<نامِ-فایل>
 
 بقیهٔ کلیدهای محدودیت هم قابل ست‌کردن‌اند: `MAX_SUB_DURATION`, `MAX_SUB_SIZE`, `MAX_TIKTOK_COUNT`, `MAX_IMG_FILES`, `GROUP_MULTIPLIER`, `NSFW_STAR_COST`, `COMMAND_LIMIT_PER_MINUTE`, `UPLOAD_TIMEOUT_SECONDS`, `YTDLP_SOCKET_TIMEOUT`, `ENABLE_LIVE_STREAM_BLOCKING`, `MAX_LIVE_STREAM_DURATION`.
 
+### ۷.۱) ادمین و FloodWait تلگرام (پیامِ «Telegram has limited message sending»)
+
+وقتی تلگرام روی اکانتِ ربات محدودیتِ ارسال می‌گذارد (FloodWait)، ربات تایمر را ذخیره می‌کند و پیامِ «⏳ Please wait …» را نشان می‌دهد. برای **ادمین** این رفتار خاموش/نرم می‌شود:
+
+| متغیر | پیش‌فرض | توضیح |
+|---|---|---|
+| `ADMIN_NO_FLOOD_BLOCK` | `true` | ادمین نه پیامِ محدودیت را می‌بیند، نه با تایمرِ `flood_wait.txt` بلاک می‌شود |
+| `ADMIN_FLOOD_AUTO_WAIT_MAX` | `1800` | حداکثر انتظارِ خودکارِ ادمین روی FloodWait (ثانیه) — بالاتر از این مقدار، مثل قبل به کاربر اطلاع داده می‌شود |
+| `ADMIN_LOW_FLOOD_MODE` | `true` | ادیت‌های پیشرفت/انیمیشن برای ادمین کم‌تر می‌شود ⇒ خودِ FloodWait دیرتر رخ می‌دهد |
+| `ADMIN_PROGRESS_EDIT_INTERVAL` | `8.0` | فاصلهٔ ادیتِ پیشرفتِ آپلود برای ادمین (ثانیه؛ کاربرِ عادی = ۱) |
+
+نکته‌ها:
+
+* این معافیت **سمتِ ربات** است؛ اگر تلگرام واقعاً محدودیت گذاشته باشد هیچ کدی تایمر را نمی‌شکند — ولی ادمین دیگر در پیام/قفل گیر نمی‌کند و آپلود تا `ADMIN_FLOOD_AUTO_WAIT_MAX` خودکار ادامه پیدا می‌کند.
+* برای پاک‌کردنِ دستیِ تایمرِ FloodWait هر کاربر: `/clean flood_wait`.
+* کامنت‌ها/پیام‌های این بخش برای ادمین ساکت می‌شود؛ پنل‌های مدیریتی و بقیهٔ کاربران دست‌نخورده‌اند.
+
 ### ۸) دیتابیس (پیش‌فرض: لوکال روی Volume)
 
 | متغیر | توضیح |

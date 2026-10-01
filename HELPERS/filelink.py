@@ -38,7 +38,8 @@ RAILWAY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 # ─────────────────────────── تنظیمات ───────────────────────────
 TTL_OPTIONS = [("30m", 1800, "۳۰ دقیقه"), ("1h", 3600, "۱ ساعت"),
-               ("6h", 21600, "۶ ساعت"), ("24h", 86400, "۲۴ ساعت")]
+               ("6h", 21600, "۶ ساعت"), ("24h", 86400, "۲۴ ساعت"),
+               ("72h", 259200, "۳ روز"), ("168h", 604800, "۷ روز")]
 TTL = {k: sec for k, sec, _ in TTL_OPTIONS}
 # سقفِ فایلِ قابلِ دریافت از تلگرام:
 #   این ربات با pyrogram روی پروتکلِ MTProto کار می‌کند (نه HTTP Bot API)، پس
@@ -177,6 +178,19 @@ def active() -> list:
     return sorted(out, key=lambda r: r.get("created") or 0, reverse=True)
 
 
+def default_ttl() -> str:
+    """TTLِ پیش‌فرضِ لینک (env: LINK_DEFAULT_TTL — پیش‌فرض ۲۴ ساعت).
+
+    لینکِ ۳۰ دقیقه‌ای برای «فایل بده و بعداً خودت دانلود کن» زود می‌پرید؛
+    پیش‌فرضِ تازه ۲۴ ساعت است و گزینه‌های ۳ روز/۷ روز هم اضافه شده‌اند.
+    """
+    try:
+        val = (os.environ.get("LINK_DEFAULT_TTL") or "24h").strip()
+    except Exception:
+        val = "24h"
+    return val if val in TTL else "24h"
+
+
 def add_file(src: str, name: str, chat_id: int, ttl: str, message_id: int = 0) -> dict:
     """فایل را به پوشهٔ لینک‌ها می‌برد و رکوردِ لینک می‌سازد."""
     token = secrets.token_urlsafe(9)
@@ -185,7 +199,8 @@ def add_file(src: str, name: str, chat_id: int, ttl: str, message_id: int = 0) -
     shutil.move(src, dest)
     rec = {"token": token, "name": safe_name, "path": dest,
            "size": os.path.getsize(dest), "chat_id": int(chat_id), "message_id": int(message_id or 0),
-           "created": time.time(), "exp": (time.time() + TTL.get(ttl, 0)) if TTL.get(ttl, 0) else 0,
+           "created": time.time(),
+           "exp": (time.time() + TTL.get(ttl, TTL.get(default_ttl(), 86400))),
            "ttl": ttl}
     with _LOCK:
         recs = _load()

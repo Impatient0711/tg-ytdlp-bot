@@ -5203,28 +5203,31 @@ def ask_quality_menu(app, message, url, tags, playlist_start_index=1, cb=None, d
     try:
         from HELPERS.safe_messeger import read_flood_wait_remaining, _write_flood_wait_file
         flood_remaining, flood_time_str = read_flood_wait_remaining(user_id)
-        if flood_remaining is not None:
-            proc_msg = app.send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str))
-        else:
-            proc_msg = app.send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG)
-        if flood_remaining is not None or proc_msg:
-            try:
-                from HELPERS.safe_messeger import schedule_delete_message
-                if proc_msg is None or not hasattr(proc_msg, 'id'):
-                    logger.error(f"[FLOOD-CHECK] proc_msg is not Message: type={type(proc_msg)}, value={proc_msg}")
-                else:
-                    app.edit_message_text(chat_id=user_id, message_id=proc_msg.id, text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG, parse_mode=enums.ParseMode.HTML)
-                    schedule_delete_message(user_id, proc_msg.id, delete_after_seconds=5)
-            except FloodWait as e:
-                _write_flood_wait_file(user_id, e.value)
-                return
-            except Exception as e:
-                err_str = str(e)
-                if "MESSAGE_ID_INVALID" in err_str:
-                    logger.debug(f"[FLOOD-CHECK] edit_message_text MESSAGE_ID_INVALID (message already deleted): {e}")
-                else:
-                    logger.error(f"[FLOOD-CHECK] edit_message_text failed: {e}, proc_msg type={type(proc_msg)}")
-            proc_msg = None
+        from HELPERS.flood_guard import bypass_enabled as _flood_bypass
+        _admin_flood_free = _flood_bypass(user_id)
+        if not _admin_flood_free:
+            if flood_remaining is not None:
+                proc_msg = app.send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str))
+            else:
+                proc_msg = app.send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG)
+            if flood_remaining is not None or proc_msg:
+                try:
+                    from HELPERS.safe_messeger import schedule_delete_message
+                    if proc_msg is None or not hasattr(proc_msg, 'id'):
+                        logger.error(f"[FLOOD-CHECK] proc_msg is not Message: type={type(proc_msg)}, value={proc_msg}")
+                    else:
+                        app.edit_message_text(chat_id=user_id, message_id=proc_msg.id, text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG, parse_mode=enums.ParseMode.HTML)
+                        schedule_delete_message(user_id, proc_msg.id, delete_after_seconds=5)
+                except FloodWait as e:
+                    _write_flood_wait_file(user_id, e.value)
+                    return
+                except Exception as e:
+                    err_str = str(e)
+                    if "MESSAGE_ID_INVALID" in err_str:
+                        logger.debug(f"[FLOOD-CHECK] edit_message_text MESSAGE_ID_INVALID (message already deleted): {e}")
+                    else:
+                        logger.error(f"[FLOOD-CHECK] edit_message_text failed: {e}, proc_msg type={type(proc_msg)}")
+                proc_msg = None
     except Exception:
         pass
     found_type = None
@@ -7259,6 +7262,13 @@ def ask_quality_menu(app, message, url, tags, playlist_start_index=1, cb=None, d
         wait_time = e.value
         from HELPERS.safe_messeger import _write_flood_wait_file
         _write_flood_wait_file(user_id, wait_time)
+        try:
+            from HELPERS.flood_guard import bypass_enabled as _flood_bypass
+            if _flood_bypass(user_id):
+                logger.warning(f"[FLOOD] admin {user_id}: FloodWait {wait_time}s — notice suppressed")
+                return
+        except Exception:
+            pass
         hours = wait_time // 3600
         minutes = (wait_time % 3600) // 60
         seconds = wait_time % 60

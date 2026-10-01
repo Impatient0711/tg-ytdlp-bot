@@ -101,6 +101,15 @@ def cleanup_temp_files():
 
 def cleanup_user_temp_files(user_id):
     """Clean up temporary files and media files in download folders for a specific user"""
+    # اگر «🔄 ادامهٔ دانلود» پیشنهاد شده باشد، فایل‌های نیمه‌کاره (.part/.ytdl) باید
+    # بمانند تا دانلود از همان‌جا ادامه پیدا کند، نه از صفر.
+    try:
+        from HELPERS.download_controls import keep_partials
+        if keep_partials(user_id):
+            logger.info(f"[DLCTL] keeping partial files for {user_id} (resume offered)")
+            return
+    except Exception:
+        pass
     user_dir = os.path.join("users", str(user_id))
     if not os.path.exists(user_dir):
         return

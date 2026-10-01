@@ -7,6 +7,17 @@ class LimitsConfig(object):
     # Limits and restrictions
     TURN_OFF_LIMITS_FOR_ADMINS = True
     #######################################################
+    # FloodWait تلگرام — معافیتِ ادمین (Telegram FloodWait — admin exemption)
+    #######################################################
+    # True ⇒ ادمین هرگز با پیامِ «Telegram has limited message sending» بلاک نمی‌شود
+    ADMIN_NO_FLOOD_BLOCK = True
+    # حداکثر انتظارِ خودکارِ ادمین روی FloodWait (ثانیه) — پیش‌فرض ۳۰ دقیقه
+    ADMIN_FLOOD_AUTO_WAIT_MAX = 1800
+    # True ⇒ فشارِ FloodWait برای ادمین کم می‌شود (ادیت‌های پیشرفت/انیمیشنِ کمتر)
+    ADMIN_LOW_FLOOD_MODE = True
+    # فاصلهٔ ادیتِ پیشرفتِ آپلود برای ادمین (ثانیه)
+    ADMIN_PROGRESS_EDIT_INTERVAL = 8.0
+    #######################################################
     MAX_FILE_SIZE_GB = 8  # GiB
     # Download timeout in seconds (2 hours = 7200 seconds)
     DOWNLOAD_TIMEOUT = 7200 # in seconds
@@ -325,9 +336,13 @@ class LimitsConfig(object):
     # متغیرهای محیطی (Railway) — بر مقادیر بالای همین کلاس اولویت دارند
     # Environment overrides — set them in Railway → Variables
     #######################################################
-    from CONFIG.envguard import i as _env_i, b as _env_b
+    from CONFIG.envguard import i as _env_i, b as _env_b, f as _env_f
 
     TURN_OFF_LIMITS_FOR_ADMINS = _env_b("TURN_OFF_LIMITS_FOR_ADMINS", TURN_OFF_LIMITS_FOR_ADMINS)
+    ADMIN_NO_FLOOD_BLOCK = _env_b("ADMIN_NO_FLOOD_BLOCK", ADMIN_NO_FLOOD_BLOCK)
+    ADMIN_FLOOD_AUTO_WAIT_MAX = _env_i("ADMIN_FLOOD_AUTO_WAIT_MAX", ADMIN_FLOOD_AUTO_WAIT_MAX, minimum=0, maximum=86400)
+    ADMIN_LOW_FLOOD_MODE = _env_b("ADMIN_LOW_FLOOD_MODE", ADMIN_LOW_FLOOD_MODE)
+    ADMIN_PROGRESS_EDIT_INTERVAL = _env_f("ADMIN_PROGRESS_EDIT_INTERVAL", ADMIN_PROGRESS_EDIT_INTERVAL)
     MAX_FILE_SIZE_GB = _env_i("MAX_FILE_SIZE_GB", MAX_FILE_SIZE_GB, minimum=1, maximum=100)
     DOWNLOAD_TIMEOUT = _env_i("DOWNLOAD_TIMEOUT", DOWNLOAD_TIMEOUT, minimum=60)
     MAX_CONCURRENT_DOWNLOADS = _env_i("MAX_CONCURRENT_DOWNLOADS", MAX_CONCURRENT_DOWNLOADS, minimum=1, maximum=20)

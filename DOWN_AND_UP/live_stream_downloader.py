@@ -57,32 +57,39 @@ def download_live_stream_chunked(
         from HELPERS.safe_messeger import read_flood_wait_remaining, _write_flood_wait_file
         flood_remaining, flood_time_str = read_flood_wait_remaining(user_id)
         
-        if flood_remaining is not None:
-            flood_msg = safe_send_message(user_id, messages.RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
-        else:
-            flood_msg = safe_send_message(user_id, messages.RATE_LIMIT_NO_TIME_MSG, message=message)
+        # ادمین: نه پیامِ «Telegram has limited message sending»، نه پروبِ FloodWait
+        try:
+            from HELPERS.flood_guard import bypass_enabled as _flood_bypass
+            _admin_flood_free = _flood_bypass(user_id)
+        except Exception:
+            _admin_flood_free = False
+        if not _admin_flood_free:
+            if flood_remaining is not None:
+                flood_msg = safe_send_message(user_id, messages.RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
+            else:
+                flood_msg = safe_send_message(user_id, messages.RATE_LIMIT_NO_TIME_MSG, message=message)
         
-        # Try to replace the flood-warning with "live stream starting" to confirm no FloodWait
-        if flood_msg:
-            try:
-                app.edit_message_text(
-                    chat_id=user_id,
-                    message_id=flood_msg.id,
-                    text=f"📡 {messages.DOWNLOAD_STARTED_MSG}",
-                    parse_mode=enums.ParseMode.HTML
-                )
-                # Successfully replaced → no FloodWait, delete the temp message
+            # Try to replace the flood-warning with "live stream starting" to confirm no FloodWait
+            if flood_msg:
                 try:
-                    app.delete_messages(user_id, flood_msg.id)
+                    app.edit_message_text(
+                        chat_id=user_id,
+                        message_id=flood_msg.id,
+                        text=f"📡 {messages.DOWNLOAD_STARTED_MSG}",
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    # Successfully replaced → no FloodWait, delete the temp message
+                    try:
+                        app.delete_messages(user_id, flood_msg.id)
+                    except Exception:
+                        pass
+                except FloodWait as e:
+                    # FloodWait IS active — the warning message stays visible for the user
+                    _write_flood_wait_file(user_id, e.value)
+                    logger.warning(f"FloodWait {e.value}s during live stream start — user notified")
+                    return False
                 except Exception:
-                    pass
-            except FloodWait as e:
-                # FloodWait IS active — the warning message stays visible for the user
-                _write_flood_wait_file(user_id, e.value)
-                logger.warning(f"FloodWait {e.value}s during live stream start — user notified")
-                return False
-            except Exception:
-                pass  # Non-FloodWait error, continue normally
+                    pass  # Non-FloodWait error, continue normally
         
         # Get configuration
         # Проверяем, должны ли применяться ограничения к админу

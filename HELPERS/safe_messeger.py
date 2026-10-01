@@ -207,6 +207,14 @@ def _should_retry(error, user_id, retry_delay=5):
 
 def _write_flood_wait_file(chat_id, value):
     """Persist FloodWait as unix timestamp (now + seconds) to user's flood_wait.txt file."""
+    # ادمین بلاک نمی‌شود (ADMIN_NO_FLOOD_BLOCK) ⇒ تایمر برای او نوشته نمی‌شود
+    try:
+        from HELPERS.flood_guard import bypass_enabled
+        if bypass_enabled(chat_id):
+            logger.info(f"[FLOOD] FloodWait {int(value)}s ignored for admin {chat_id} (no block)")
+            return
+    except Exception:
+        pass
     try:
         user_dir = os.path.join("users", str(chat_id))
         os.makedirs(user_dir, exist_ok=True)
@@ -222,6 +230,17 @@ def read_flood_wait_remaining(chat_id):
     Returns (remaining_seconds, formatted_str) or (None, None).
     Deletes the file automatically if the FloodWait has expired.
     """
+    # ادمین هرگز با تایمرِ FloodWait متوقف نمی‌شود
+    try:
+        from HELPERS.flood_guard import bypass_enabled
+        if bypass_enabled(chat_id):
+            try:  # فایلِ کهنهٔ احتمالی پاک شود تا با خاموش‌شدنِ معافیت، بلاکی نماند
+                os.remove(os.path.join("users", str(chat_id), "flood_wait.txt"))
+            except Exception:
+                pass
+            return None, None
+    except Exception:
+        pass
     user_dir = os.path.join("users", str(chat_id))
     flood_file = os.path.join(user_dir, "flood_wait.txt")
     if not os.path.exists(flood_file):

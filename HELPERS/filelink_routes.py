@@ -43,40 +43,76 @@ def load() -> dict:
         return {}
 
 
-def resolve(token: str):
-    """رکوردِ لینک اگر وجود داشته باشد، فایلش هست و منقضی نشده باشد."""
+def keep_after_exp_sec() -> int:
+    """چند ساعت فایل بعد از انقضای لینک روی دیسک بماند.
+
+    لینکِ عمومی سرِ موعدش ۴۰۴ می‌شود، ولی خودِ ربات باید بتواند «همان لینکِ خودش»
+    را دوباره دانلود کند؛ پس فایل را پاک نمی‌کنیم و فقط بعد از این مهلت می‌بریم.
+    """
+    try:
+        hours = float((os.environ.get("FILELINK_KEEP_HOURS") or "72").strip())
+    except Exception:
+        hours = 72.0
+    return int(max(0.0, hours) * 3600)
+
+
+def resolve(token: str, allow_expired: bool = False):
+    """رکوردِ لینک اگر وجود داشته باشد و فایلش روی دیسک باشد.
+
+    ``allow_expired=True`` ⇒ رکوردِ منقضی هم برگردانده می‌شود (برای خودِ ربات که
+    بخواهد از کپیِ محلی استفاده کند). لینکِ عمومیِ منقضی همان‌طور ۴۰۴ می‌ماند.
+    """
     import time
     rec = load().get(token)
     if not rec:
         return None
-    if rec.get("exp") and time.time() > rec["exp"]:
+    expired = bool(rec.get("exp")) and time.time() > rec["exp"]
+    if expired and not allow_expired:
         return None
     path = rec.get("path") or ""
-    return rec if os.path.exists(path) else None
+    if not os.path.exists(path):
+        return None
+    if expired:
+        rec = dict(rec)
+        rec["expired"] = True
+    return rec
 
 
 def sweep_files() -> list:
-    """فایل‌های منقضی را پاک می‌کند و رکوردهای پاک‌شده را برمی‌گرداند."""
+    """رکوردهای «گذشته از مهلتِ نگه‌داری» را پاک می‌کند.
+
+    لینکِ منقضی ⇒ رکورد می‌ماند و فایل هم تا ``FILELINK_KEEP_HOURS`` (پیش‌فرض ۷۲
+    ساعت) روی دیسک می‌ماند؛ فقط بعد از آن پاک می‌شود. این‌طوری «فایل بده → لینک
+    بگیر → همان لینک را بده» حتی بعد از انقضای لینکِ عمومی هم کار می‌کند.
+    """
     import time
     now = time.time()
     recs = load()
-    expired = []
+    keep = keep_after_exp_sec()
+    torn = []
+    changed = False
     for token, rec in list(recs.items()):
-        if rec.get("exp") and now > rec["exp"]:
-            expired.append(rec)
-            recs.pop(token, None)
-    if expired:
+        exp = rec.get("exp") or 0
+        if not exp or now <= exp:
+            continue
+        # لینک منقضی است؛ فایل تا مهلتِ نگه‌داری می‌ماند (رکورد هم می‌ماند)
+        if now <= exp + keep:
+            continue
+        torn.append(rec)
+        recs.pop(token, None)
+        changed = True
+    if changed:
         try:
             with open(store_path(), "w", encoding="utf-8") as f:
                 json.dump(recs, f, ensure_ascii=False)
         except Exception:
             pass
-        for rec in expired:
+        for rec in torn:
             try:
                 os.remove(rec.get("path") or "")
             except Exception:
                 pass
-    return expired
+    return torn
 
 
 def register_routes(app) -> bool:

@@ -701,45 +701,71 @@ def down_and_audio(app, message, url, tags, quality_key=None, playlist_name=None
         from HELPERS.safe_messeger import read_flood_wait_remaining, _write_flood_wait_file
         flood_remaining, flood_time_str = read_flood_wait_remaining(user_id)
 
-        # We send the initial message
-        if flood_remaining is not None:
-            proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
-        else:
-            proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG, message=message)
-
-        # We are trying to replace with "Download started"
+        # ادمین: نه پیامِ «Telegram has limited message sending»، نه پروبِ FloodWait
         try:
-            app.edit_message_text(
-                chat_id=user_id,
-                message_id=proc_msg.id,
-                text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG,
-                parse_mode=enums.ParseMode.HTML
-            )
-            # Schedule deletion of "Download started" message after 5 seconds
+            from HELPERS.flood_guard import bypass_enabled as _flood_bypass
+            _admin_flood_free = _flood_bypass(user_id)
+        except Exception:
+            _admin_flood_free = False
+        if not _admin_flood_free:
+            # We send the initial message
+            if flood_remaining is not None:
+                proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_WITH_TIME_MSG.format(time=flood_time_str), message=message)
+            else:
+                proc_msg = safe_send_message(user_id, safe_get_messages(user_id).RATE_LIMIT_NO_TIME_MSG, message=message)
+
+            # We are trying to replace with "Download started"
             try:
-                from HELPERS.safe_messeger import schedule_delete_message
-                schedule_delete_message(user_id, proc_msg.id, delete_after_seconds=5)
+                app.edit_message_text(
+                    chat_id=user_id,
+                    message_id=proc_msg.id,
+                    text=safe_get_messages(user_id).DOWNLOAD_STARTED_MSG,
+                    parse_mode=enums.ParseMode.HTML
+                )
+                # Schedule deletion of "Download started" message after 5 seconds
+                try:
+                    from HELPERS.safe_messeger import schedule_delete_message
+                    schedule_delete_message(user_id, proc_msg.id, delete_after_seconds=5)
+                except Exception as e:
+                    logger.error(f"Error scheduling download started message deletion: {e}")
+            except FloodWait as e:
+                _write_flood_wait_file(user_id, e.value)
+                return
             except Exception as e:
-                logger.error(f"Error scheduling download started message deletion: {e}")
-        except FloodWait as e:
-            _write_flood_wait_file(user_id, e.value)
-            return
-        except Exception as e:
-            logger.error(f"Error editing message: {e}")
-            # Stop animation before returning
-            stop_anim.set()
-            if anim_thread:
-                anim_thread.join(timeout=1)
-            return
+                logger.error(f"Error editing message: {e}")
+                # Stop animation before returning
+                stop_anim.set()
+                if anim_thread:
+                    anim_thread.join(timeout=1)
+                return
 
         # If there is no flood error, send a normal message (only once)
-        proc_msg = app.send_message(user_id, safe_get_messages(user_id).PROCESSING_MSG, reply_parameters=ReplyParameters(message_id=message.id))
+        # ── دکمه‌های کنترلِ دانلود (❌ لغو / 🔄 ادامه) روی پیامِ دانلود ──
+        _dlctl_markup = None
+        try:
+            from HELPERS.download_controls import (register_controls as _dlctl_register,
+                                                   install_restarter as _dlctl_restarter,
+                                                   keyboard as _dlctl_keyboard)
+            _dlctl_register(user_id, kind="audio", url=url)
+            _dlctl_restarter(user_id, lambda: down_and_audio(
+                app, message, url, tags, quality_key=quality_key, playlist_name=playlist_name,
+                video_count=video_count, video_start_with=video_start_with,
+                format_override=format_override, cookies_already_checked=True, use_proxy=use_proxy))
+            _dlctl_markup = _dlctl_keyboard(user_id)
+        except Exception as _dlctl_err:
+            logger.debug(f"[DLCTL] setup failed (audio): {_dlctl_err}")
+        proc_msg = app.send_message(user_id, safe_get_messages(user_id).PROCESSING_MSG, reply_parameters=ReplyParameters(message_id=message.id), reply_markup=_dlctl_markup)
         # Pin proc/status message for visibility
         try:
             app.pin_chat_message(user_id, proc_msg.id, disable_notification=True)
         except Exception:
             pass
         proc_msg_id = proc_msg.id
+        # شناسهٔ پیامِ دانلود را ثبت کن تا دکمه‌های لغو/ادامه روی همان بمانند
+        try:
+            _dlctl_register(user_id, kind="audio", url=url, message_id=proc_msg_id)
+        except Exception:
+            pass
         status_msg = safe_send_message(user_id, safe_get_messages(user_id).AUDIO_PROCESSING_MSG, message=message)
         hourglass_msg = safe_send_message(user_id, safe_get_messages(user_id).WAITING_HOURGLASS_MSG, message=message)
         try:
@@ -967,6 +993,12 @@ def down_and_audio(app, message, url, tags, quality_key=None, playlist_name=None
             # Check the timeout
             if check_download_timeout(user_id):
                 raise Exception(f"Download timeout exceeded ({Config.DOWNLOAD_TIMEOUT // 3600} hours)")
+            # ثبتِ پیشرفت برای نگهبانِ «گیرکردنِ دانلود» (دکمهٔ 🔄 ادامه)
+            try:
+                from HELPERS.download_controls import touch as _dlctl_touch_fn
+                _dlctl_touch_fn(user_id, "download")
+            except Exception:
+                pass
             current_time = time.time()
             
             def build_progress_metadata(downloaded_bytes, total_bytes):
@@ -3045,12 +3077,44 @@ def down_and_audio(app, message, url, tags, quality_key=None, playlist_name=None
             send_to_logger(message, safe_get_messages(user_id).PLAYLIST_AUDIO_SENT_LOG_MSG.format(sent=total_sent, total=len(requested_indices), quality=quality_key, user_id=user_id))
 
     except Exception as e:
+        _dlctl_offer_resume = None
+        try:
+            from HELPERS.download_controls import offer_resume as _dlctl_offer_resume, keep_partials as _dlctl_keep  # noqa: F811
+        except Exception:
+            _dlctl_keep = None
         if "Download timeout exceeded" in str(e):
             send_to_user(message, safe_get_messages(user_id).DOWNLOAD_TIMEOUT_MSG)
             log_error_to_channel(message, LoggerMsg.DOWNLOAD_TIMEOUT_LOG, url)
+            if _dlctl_offer_resume and _dlctl_keep and not _dlctl_keep(user_id):
+                _dlctl_offer_resume(user_id, message,
+                                    lambda: down_and_audio(app, message, url, tags, quality_key=quality_key,
+                                                           playlist_name=playlist_name, video_count=video_count,
+                                                           video_start_with=video_start_with,
+                                                           format_override=format_override,
+                                                           cookies_already_checked=True, use_proxy=use_proxy),
+                                    url=url, kind="audio", reason=str(e),
+                                    msg_id=proc_msg_id)
+        elif "cancelled by user" in (str(e) or "").lower():
+            # لغو با دکمهٔ «❌ لغو دانلود» (یا /clean)
+            logger.info(f"[DLCTL] audio download cancelled by user {user_id}")
+            try:
+                from HELPERS.download_controls import clear_for as _dlctl_clear_for
+                _dlctl_clear_for(user_id, proc_msg_id)
+            except Exception:
+                pass
+            send_to_user(message, "🛑 دانلود لغو شد.")
         else:
             logger.error(f"Error in audio download: {e}")
             send_to_user(message, safe_get_messages(user_id).AUDIO_DOWNLOAD_FAILED_MSG.format(error=str(e)))
+            if _dlctl_offer_resume and _dlctl_keep and not _dlctl_keep(user_id):
+                _dlctl_offer_resume(user_id, message,
+                                    lambda: down_and_audio(app, message, url, tags, quality_key=quality_key,
+                                                           playlist_name=playlist_name, video_count=video_count,
+                                                           video_start_with=video_start_with,
+                                                           format_override=format_override,
+                                                           cookies_already_checked=True, use_proxy=use_proxy),
+                                    url=url, kind="audio", reason=str(e),
+                                    msg_id=proc_msg_id)
         # Immediate cleanup on error
         try:
             if status_msg_id:
@@ -3066,6 +3130,13 @@ def down_and_audio(app, message, url, tags, quality_key=None, playlist_name=None
         # Always unregister cancel event to prevent memory leaks
         try:
             unregister_download_cancel_event(user_id, _cancel_ev)
+        except Exception:
+            pass
+        # پایانِ کار: دکمه‌های «❌ لغو / 🔄 ادامه» از پیامِ دانلود برداشته می‌شوند
+        # (اگر «ادامه» پیشنهاد شده باشد، دکمه‌ها می‌مانند)
+        try:
+            from HELPERS.download_controls import finish as _dlctl_finish
+            _dlctl_finish(user_id)
         except Exception:
             pass
         # Always clean up resources
