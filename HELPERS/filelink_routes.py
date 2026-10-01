@@ -43,19 +43,45 @@ def load() -> dict:
         return {}
 
 
+def _statvfs(path: str | None = None):
+    try:
+        return os.statvfs(path or links_dir())
+    except Exception:
+        return None
+
+
 def free_mb(path: str | None = None) -> float:
     """فضای آزادِ دیسکِ پوشهٔ لینک‌ها (مگابایت). خطا ⇒ عددِ بزرگ (سخت‌گیری نکن)."""
-    try:
-        st = os.statvfs(path or links_dir())
-        return (st.f_bavail * st.f_frsize) / (1024.0 * 1024.0)
-    except Exception:
+    st = _statvfs(path)
+    if st is None:
         return 10 ** 9
+    return (st.f_bavail * st.f_frsize) / (1024.0 * 1024.0)
+
+
+def total_mb(path: str | None = None) -> float:
+    """ظرفیتِ کلِ دیسکِ پوشهٔ لینک‌ها (مگابایت)."""
+    st = _statvfs(path)
+    if st is None:
+        return 10 ** 9
+    return (st.f_blocks * st.f_frsize) / (1024.0 * 1024.0)
 
 
 def min_free_mb() -> float:
-    """آستانهٔ فضایِ آزاد (پیش‌فرض ۱۵۰ مگابایت). زیرِ این ⇒ لینکِ تازه ساخته نمی‌شود."""
+    """آستانهٔ فضایِ آزادِ دیسک (مگابایت).
+
+    با ``FILELINK_MIN_FREE_MB`` دستی ست می‌شود. اگر ست نشده بود، **نسبی** است:
+    ۱۰٪ ظرفیتِ دیسک، محدود به بازهٔ ۵۰ تا ۱۵۰ مگابایت. دلیلش والیوم‌های کوچکِ
+    ریلوی است (مثلاً ۵۰۰ مگابایت) — آستانهٔ ثابتِ ۱۵۰ مگابایت روی آن‌ها یعنی
+    یک‌سومِ دیسک همیشه «پُر» حساب شود و لینکِ فایلِ بزرگ بی‌دلیل رد شود.
+    """
+    raw = (os.environ.get("FILELINK_MIN_FREE_MB") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except Exception:
+            pass
     try:
-        return max(0.0, float((os.environ.get("FILELINK_MIN_FREE_MB") or "150").strip()))
+        return float(min(150.0, max(50.0, total_mb() * 0.10)))
     except Exception:
         return 150.0
 
