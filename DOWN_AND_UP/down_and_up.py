@@ -883,6 +883,7 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
         # Оценка требуемого места: сначала берём из yt-dlp точный/приблизительный размер,
         # затем оцениваем по битрейту и длительности, в крайнем случае 2 ГБ.
         required_bytes = 2 * 1024 * 1024 * 1024
+        size_known = False        # آیا این عدد از yt-dlp آمده یا فقط حدسِ ۲ گیگابایتی است؟
         try:
             # Try to use cached info first for size check
             if cached_video_info:
@@ -919,11 +920,21 @@ def down_and_up(app, message, url, playlist_name, video_count, video_start_with,
                             size = int((float(best_tbr) * 1000.0 / 8.0) * float(duration))
             if size and size > 0:
                 required_bytes = int(size * 1.2)  # 20% запас
+                size_known = True
         except Exception:
             pass
 
-        if not check_disk_space(user_dir_name, required_bytes):
-            send_to_user(message, safe_get_messages(user_id).ERROR_NO_DISK_SPACE_MSG)
+        if not check_disk_space(user_dir_name, required_bytes,
+                                estimate_known=size_known, label="video"):
+            # عددِ واقعی را هم به کاربر بگو تا «چرا؟» روشن باشد (و در لاگ هم هست)
+            try:
+                from HELPERS.filesystem_hlp import disk_usage_report, humanbytes as _hb
+                _du = disk_usage_report(user_dir_name)
+                _extra = ("\n📊 لازم: <code>%s</code> · آزاد: <code>%s</code> · ظرفیتِ دیسک: <code>%s</code>"
+                          % (_hb(required_bytes), _hb(_du.get("free", 0)), _hb(_du.get("total", 0))))
+            except Exception:
+                _extra = ""
+            send_to_user(message, safe_get_messages(user_id).ERROR_NO_DISK_SPACE_MSG + _extra)
             return
 
         # Create user directory (subscription already checked in video_extractor)

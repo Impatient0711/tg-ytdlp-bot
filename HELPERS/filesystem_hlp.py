@@ -243,29 +243,64 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-# Helper function to check available disk space
-def check_disk_space(path, required_bytes):
-    """
-    Checks if there's enough disk space available at the specified path.
+# ─────────────────────────── فضایِ دیسک ───────────────────────────
+def disk_min_free_bytes() -> int:
+    """حداقلِ فضایِ آزادی که همیشه باید بماند (env: DISK_MIN_FREE_MB · پیش‌فرض ۱۰۰MB)."""
+    try:
+        mb = float((os.environ.get("DISK_MIN_FREE_MB") or "100").strip())
+    except Exception:
+        mb = 100.0
+    return int(max(1.0, mb) * 1024 * 1024)
 
-    Args:
-        path (str): Path to check
-        required_bytes (int): Required bytes of free space
 
-    Returns:
-        bool: True if enough space is available, False otherwise
-    """
+def disk_usage_report(path) -> dict:
+    """گزارشِ فضایِ دیسک برای لاگ/پیامِ کاربر (هرگز استثنا نمی‌دهد)."""
     try:
         total, used, free = shutil.disk_usage(path)
-        if free and free < required_bytes:
-            logger.warning(
-                f"Not enough disk space. Required: {humanbytes(required_bytes)}, Available: {humanbytes(free)}")
-            return False
-        return True
+        return {"path": str(path), "total": int(total), "used": int(used), "free": int(free)}
+    except Exception as exc:
+        logger.error(LoggerMsg.FILESYSTEM_ERROR_CHECKING_DISK_SPACE_LOG_MSG.format(error=exc))
+        return {"path": str(path), "total": 0, "used": 0, "free": 0, "error": str(exc)}
+
+
+def check_disk_space(path, required_bytes, estimate_known: bool = False, label: str = ""):
+    """آیا برای این دانلود جایِ دیسک هست؟
+
+    چرا ``estimate_known``: مقدارِ خواسته‌شده اغلب یک **حدس** است (مثلاً ۲ گیگابایت برای
+    هر ویدیو). روی والیومِ کوچکِ ریلوی (۵۰۰ مگابایت) آن حدس هیچ‌وقت برآورده نمی‌شود و
+    ربات به همه می‌گفت «❌ فضای دیسک کافی نیست» — حتی برای یک کلیپِ ۵ مگابایتی.
+    پس وقتی اندازه **حدسی** است، مطالبه را به ۶۰٪ ظرفیتِ همان دیسک سقف می‌زنیم؛ وقتی
+    اندازه از yt-dlp **واقعی** است، همان عدد ملاک است (فایلِ ۱٫۵ گیگابایتی روی دیسکِ
+    ۵۰۰ مگابایتی واقعاً جا نمی‌شود ⇒ درست رد می‌شود).
+
+    Returns:
+        bool: True اگر جا هست
+    """
+    floor = disk_min_free_bytes()
+    need = int(required_bytes or 0)
+    try:
+        total, used, free = shutil.disk_usage(path)
     except Exception as e:
         logger.error(LoggerMsg.FILESYSTEM_ERROR_CHECKING_DISK_SPACE_LOG_MSG.format(error=e))
         # If we can't check, assume there's enough space
         return True
+    raw_need = need
+    if not estimate_known and total:
+        cap = max(floor, int(total * 0.60))
+        need = min(need, cap)
+    need = max(need, min(floor, int(total * 0.9)) if total else floor)
+    ok = (free >= need)
+    try:
+        _cap_note = "" if raw_need == need else " (حدسِ اولیه %s سقف خورد)" % humanbytes(raw_need)
+        logger.info("[DISK] %spath=%s total=%s free=%s need=%s%s ⇒ %s",
+                    (label + ": ") if label else "", path, humanbytes(total), humanbytes(free),
+                    humanbytes(need), _cap_note, "OK" if ok else "BLOCK")
+    except Exception:
+        pass
+    if not ok:
+        logger.warning(
+            f"Not enough disk space. Required: {humanbytes(need)}, Available: {humanbytes(free)}")
+    return ok
 
 def create_directory(path):
     # Create The Directory (And All Intermediate Directories) IF Its Not Exist.

@@ -437,6 +437,7 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
     tg_limit = 2 * 1024 ** 3              # سقفِ ارسالِ فایل توسط ربات در تلگرام
     user_dir = os.path.join("users", str(user_id))
     os.makedirs(user_dir, exist_ok=True)
+    logger.info("[DIRECT] start user=%s hint=%r url=%s", user_id, kind_hint, url[:160])
 
     cancel_ev = register_download_cancel_event(user_id)
     msg_id = None
@@ -470,6 +471,31 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
                 if ext:
                     name += ext
         total_remote = int(info.get("length") or 0)
+        logger.info("[DIRECT] probe: status=%s len=%s ctype=%r ranges=%s local=%s name=%r",
+                    info.get("status"), total_remote or "-", (info.get("content_type") or "")[:40],
+                    info.get("accept_ranges"), bool(info.get("local")), name[:80])
+        # ── فضایِ دیسک: با عددِ واقعیِ فایل (نه حدسِ ۲ گیگابایتی) ──
+        try:
+            from HELPERS.filesystem_hlp import check_disk_space, disk_usage_report, humanbytes
+            _du = disk_usage_report(user_dir)
+            _need = int(total_remote * 1.15) + (1024 * 1024) if total_remote else (200 * 1024 * 1024)
+            if not check_disk_space(user_dir, _need, estimate_known=bool(total_remote), label="direct"):
+                clear(user_id)
+                set_active_download(user_id, False)
+                safe_send_message(
+                    user_id,
+                    "⛔️ جایِ دیسکِ سرور برای این فایل کافی نیست.\n"
+                    "📊 اندازهٔ فایل: <code>%s</code> · آزاد: <code>%s</code> · ظرفیت: <code>%s</code>\n"
+                    "👈 کمی صبر کن تا فایل‌های قبلی پاک شوند، یا فایلِ کوچک‌تری بفرست."
+                    % (hsize(total_remote) if total_remote else "نامعلوم",
+                       humanbytes(_du.get("free", 0)), humanbytes(_du.get("total", 0))),
+                    message=message, parse_mode="html")
+                logger.warning("[DIRECT] aborted: not enough disk for %s (free=%s)",
+                               hsize(total_remote) if total_remote else "?",
+                               humanbytes(_du.get("free", 0)))
+                return False
+        except ImportError:
+            pass
         if total_remote and total_remote > max_bytes:
             safe_send_message(user_id,
                               f"❌ حجمِ فایل ({hsize(total_remote)}) از سقفِ مجاز "
@@ -812,7 +838,8 @@ def maybe_handle_direct_link(app, message, url: str, user_id: int) -> bool:
     try:
         ok, reason = is_direct_link(url)
         if not ok:
-            logger.debug(f"[DIRECT] not a direct link ({reason}): {url[:90]}")
+            # سطحِ info (نه debug) تا در لاگِ Railway دیده شود؛ وگرنه بی‌صدا رد می‌شود
+            logger.info(f"[DIRECT] not a direct link ({reason}): {url[:120]}")
             return False
         logger.info(f"[DIRECT] handling direct link ({reason}) for {user_id}: {url[:100]}")
         threading.Thread(target=download_direct, args=(app, message, url, user_id, reason),

@@ -784,8 +784,18 @@ def down_and_audio(app, message, url, tags, quality_key=None, playlist_name=None
         user_folder = os.path.abspath(os.path.join("users", str(user_id)))
         create_directory(user_folder)
 
-        if not check_disk_space(user_folder, 280 * 1024 * 1024 * video_count):
-            send_to_user(message, safe_get_messages(user_id).ERROR_NO_DISK_SPACE_MSG)
+        _need_bytes = 280 * 1024 * 1024 * video_count
+        if not check_disk_space(user_folder, _need_bytes, estimate_known=False, label="audio"):
+            # ۲۸۰ مگابایت برای هر فایل فقط یک حدس است ⇒ روی والیومِ کوچکِ ریلوی
+            # بی‌دلیل همه‌چیز رد می‌شد؛ عددِ واقعی هم به کاربر نشان داده می‌شود.
+            try:
+                from HELPERS.filesystem_hlp import disk_usage_report, humanbytes as _hb
+                _du = disk_usage_report(user_folder)
+                _extra = ("\n📊 برآورد: <code>%s</code> · آزاد: <code>%s</code> · ظرفیتِ دیسک: <code>%s</code>"
+                          % (_hb(_need_bytes), _hb(_du.get("free", 0)), _hb(_du.get("total", 0))))
+            except Exception:
+                _extra = ""
+            send_to_user(message, safe_get_messages(user_id).ERROR_NO_DISK_SPACE_MSG + _extra)
             return
 
         # Create user directory (subscription already checked in video_extractor)

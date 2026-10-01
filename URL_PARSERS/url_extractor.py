@@ -1404,9 +1404,14 @@ def url_distractor(app, message):
                 _dl_match = _dl_re.search(r"https?://\S+", final_text or "")
                 _dl_url = _dl_match.group(0) if _dl_match else ""
                 if _dl_url:
+                    logger.info(f"[DIRECT] candidate from message: {_dl_url[:140]}")
                     from HELPERS.direct_link import maybe_handle_direct_link
                     if maybe_handle_direct_link(app, message, _dl_url, user_id):
+                        logger.info("[DIRECT] handled by direct-link downloader (yt-dlp skipped)")
                         return
+                    logger.info("[DIRECT] falling back to yt-dlp/gallery-dl pipeline")
+                else:
+                    logger.info("[DIRECT] no http(s) URL in message text ⇒ nothing to try")
             except Exception as _dl_err:
                 logger.error(f"URL_EXTRACTOR: direct-link handler failed: {_dl_err}")
 
