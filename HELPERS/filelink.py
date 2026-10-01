@@ -179,20 +179,67 @@ def active() -> list:
 
 
 def default_ttl() -> str:
-    """TTLِ پیش‌فرضِ لینک (env: LINK_DEFAULT_TTL — پیش‌فرض ۲۴ ساعت).
+    """TTLِ پیش‌فرضِ لینک (env: LINK_DEFAULT_TTL — پیش‌فرض ۶ ساعت).
 
     لینکِ ۳۰ دقیقه‌ای برای «فایل بده و بعداً خودت دانلود کن» زود می‌پرید؛
-    پیش‌فرضِ تازه ۲۴ ساعت است و گزینه‌های ۳ روز/۷ روز هم اضافه شده‌اند.
+    پیش‌فرض ۶ ساعت است (خواستِ کارفرما) و گزینه‌های ۲۴ ساعت/۳ روز/۷ روز هم هست.
+    نکته: فایل تا FILELINK_KEEP_HOURS بعد از انقضا روی دیسک می‌ماند تا خودِ ربات
+    بتواند همان لینک را دوباره دانلود کند.
     """
     try:
-        val = (os.environ.get("LINK_DEFAULT_TTL") or "24h").strip()
+        val = (os.environ.get("LINK_DEFAULT_TTL") or "6h").strip()
     except Exception:
-        val = "24h"
-    return val if val in TTL else "24h"
+        val = "6h"
+    return val if val in TTL else "6h"
+
+
+class DiskFullError(RuntimeError):
+    """جایِ کافی روی دیسکِ لینک‌ها نیست (والیومِ کوچکِ ریلوی)."""
+
+
+def ensure_space(need_bytes: int) -> None:
+    """قبلِ از ساختنِ لینک، جایِ لازم را آزاد می‌کند؛ نشد ⇒ DiskFullError.
+
+    ترتیب: اول جاروی عادی (منقضی‌های گذشته از مهلت)؛ اگر جا نشد، فایل‌های
+    منقضیِ نگه‌داشته‌شده از قدیمی‌ترین؛ اگر باز هم نشد ⇒ خطای روشن به کاربر.
+    """
+    need_mb = (need_bytes or 0) / (1024.0 * 1024.0)
+    want = fr.min_free_mb() + need_mb
+    if fr.free_mb() >= want:
+        return
+    with contextlib.suppress(Exception):
+        fr.sweep_files()
+    if fr.free_mb() >= want:
+        return
+    # جارو فقط «گذشته از مهلتِ نگه‌داری» و (در تنگیِ جا) منقضی‌ها را می‌برد؛
+    # اینجا یک بار دیگر با آستانهٔ بزرگ‌تر تلاش می‌کنیم.
+    try:
+        os.environ["FILELINK_MIN_FREE_MB"] = str(int(want) + 1)
+        with contextlib.suppress(Exception):
+            fr.sweep_files()
+    finally:
+        with contextlib.suppress(Exception):
+            os.environ.pop("FILELINK_MIN_FREE_MB", None)
+    free = fr.free_mb()
+    if free < want:
+        raise DiskFullError(
+            "جایِ دیسکِ لینک‌ها کافی نیست (آزاد: %s، لازم: %s). "
+            "چند لینکِ کهنه را با «🔗 همهٔ لینک‌ها → 🧹 پاک‌کردنِ همه» پاک کن "
+            "یا والیومِ سرور را بزرگ‌تر کن."
+            % (fr_human(free), fr_human(want)))
+
+
+def fr_human(mb: float) -> str:
+    if mb >= 1024:
+        return "%.1fGB" % (mb / 1024.0)
+    return "%.0fMB" % mb
 
 
 def add_file(src: str, name: str, chat_id: int, ttl: str, message_id: int = 0) -> dict:
     """فایل را به پوشهٔ لینک‌ها می‌برد و رکوردِ لینک می‌سازد."""
+    ttl = ttl or default_ttl()
+    with contextlib.suppress(Exception):
+        ensure_space(os.path.getsize(src))
     token = secrets.token_urlsafe(9)
     safe_name = os.path.basename(name or "file") or "file"
     dest = os.path.join(links_dir(), "%s_%s" % (token, safe_name))

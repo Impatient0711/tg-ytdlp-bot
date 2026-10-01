@@ -43,6 +43,23 @@ def load() -> dict:
         return {}
 
 
+def free_mb(path: str | None = None) -> float:
+    """فضای آزادِ دیسکِ پوشهٔ لینک‌ها (مگابایت). خطا ⇒ عددِ بزرگ (سخت‌گیری نکن)."""
+    try:
+        st = os.statvfs(path or links_dir())
+        return (st.f_bavail * st.f_frsize) / (1024.0 * 1024.0)
+    except Exception:
+        return 10 ** 9
+
+
+def min_free_mb() -> float:
+    """آستانهٔ فضایِ آزاد (پیش‌فرض ۱۵۰ مگابایت). زیرِ این ⇒ لینکِ تازه ساخته نمی‌شود."""
+    try:
+        return max(0.0, float((os.environ.get("FILELINK_MIN_FREE_MB") or "150").strip()))
+    except Exception:
+        return 150.0
+
+
 def keep_after_exp_sec() -> int:
     """چند ساعت فایل بعد از انقضای لینک روی دیسک بماند.
 
@@ -101,6 +118,19 @@ def sweep_files() -> list:
         torn.append(rec)
         recs.pop(token, None)
         changed = True
+    # ── گاردِ فضایِ دیسک: نگه‌داشتنِ فایلِ منقضی نباید دیسک را پُر کند ──
+    # (روی والیومِ کوچکِ ریلوی، مثلاً ۰٫۴ گیگابایت، چند کلیپِ ۱۰ مگابایتی کافی است)
+    kept = [(token, rec) for token, rec in recs.items()
+            if (rec.get("exp") or 0) and now > rec["exp"]]
+    if kept and free_mb() < min_free_mb():
+        kept.sort(key=lambda kv: kv[1].get("exp") or 0)   # قدیمی‌ترین انقضا اول
+        for token, rec in kept:
+            if free_mb() >= min_free_mb():
+                break
+            recs.pop(token, None)
+            torn.append(rec)
+            changed = True
+
     if changed:
         try:
             with open(store_path(), "w", encoding="utf-8") as f:

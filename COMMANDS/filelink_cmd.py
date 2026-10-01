@@ -94,8 +94,10 @@ def _expiry_keyboard(chat_id: int, message_id: int):
 
 def _link_keyboard(token: str):
     rows = [[InlineKeyboardButton("🗑 پاک کن (فایل + لینک)", callback_data="flrm|%s" % token)]]
-    rows.append([InlineKeyboardButton("⏱ تمدید ۳۰ دقیقه", callback_data="flex|%s|30m" % token),
-                 InlineKeyboardButton("⏱ تمدید ۶ ساعت", callback_data="flex|%s|6h" % token)])
+    rows.append([InlineKeyboardButton("⏱ تمدید ۶ ساعت", callback_data="flex|%s|6h" % token),
+                 InlineKeyboardButton("⏱ تمدید ۲۴ ساعت", callback_data="flex|%s|24h" % token)])
+    rows.append([InlineKeyboardButton("⏱ تمدید ۳ روز", callback_data="flex|%s|72h" % token),
+                 InlineKeyboardButton("⏱ تمدید ۷ روز", callback_data="flex|%s|168h" % token)])
     rows.append([InlineKeyboardButton("🔗 همهٔ لینک‌ها", callback_data="fllist")])
     return InlineKeyboardMarkup(rows)
 
@@ -274,7 +276,18 @@ def flmk_callback(app, cq):
                           "یک بار دیگر امتحان کن؛ اگر باز هم نشد بگو، راهِ دیگری "
                           "(سرورِ Bot API محلی) می‌گذاریم." % str(e)[:150])
         return True
-    rec = fl.add_file(path, name, uid, ttl, message_id=msg_id)
+    try:
+        rec = fl.add_file(path, name, uid, ttl, message_id=msg_id)
+    except fl.DiskFullError as e:
+        # والیومِ کوچکِ ریلوی: جایِ دیسک تمام شد ⇒ پیامِ روشن، نه کرش
+        logger.error(f"filelink: disk full: {e}")
+        with contextlib.suppress(Exception):
+            safe_edit_message_text(uid, cq.message.id, "❌ لینک ساخته نشد.")
+        safe_send_message(uid, "⛔️ %s" % str(e))
+        with contextlib.suppress(Exception):
+            if os.path.exists(path):
+                os.remove(path)
+        return True
     with contextlib.suppress(Exception):
         safe_edit_message_text(uid, cq.message.id, _link_text(rec), reply_markup=_link_keyboard(rec["token"]))
     return True
