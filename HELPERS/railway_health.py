@@ -314,6 +314,17 @@ async def _diag_info(request):
                                                    or [now]) - now, 1)}
         except Exception as exc:
             info["links"] = {"error": str(exc)}
+        # آدرسِ پایهٔ لینک‌ها (همان چیزی که کاربر در تلگرام می‌بیند) — برای
+        # راستی‌آزماییِ اینکه لینک‌ها با https:// کامل ساخته می‌شوند
+        try:
+            from HELPERS.filelink import base_url as _fl_base, links_dir as _fl_links_dir
+            _base = (_fl_base() or "").strip()
+            info["linkBase"] = _base or "(نامعلوم — LINK_BASE_URL/دامنهٔ ریلوی پیدا نشد)"
+            info["linkSample"] = (_base + "/d/<token>/<name>") if _base else ""
+            _ld = _fl_links_dir()
+            info["linksDir"] = {"path": _ld, "exists": os.path.isdir(_ld)}
+        except Exception as exc:
+            info["linkBase"] = "error: %s" % exc
         keys = ("PORT", "HEALTH_PORT", "DATA_DIR", "RAILWAY_VOLUME_MOUNT_PATH", "TZ",
                 "LINK_BASE_URL", "RAILWAY_PUBLIC_DOMAIN", "MAX_FILE_SIZE_GB",
                 "DISK_MIN_FREE_MB", "LINK_DEFAULT_TTL", "FILELINK_KEEP_HOURS",
