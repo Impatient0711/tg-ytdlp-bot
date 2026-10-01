@@ -80,6 +80,13 @@ def _is_permanent_unavailable(error_lower):
 
 
 def get_video_formats(url, user_id=None, playlist_start_index=1, cookies_already_checked=False, use_proxy=False, playlist_end_index=None):
+    # گاردِ ورودی: پیش‌تر متنِ بدونِ لینک (url=None) تا اینجا می‌آمد و با
+    # «'NoneType' object has no attribute 'lower'» سقوط می‌کرد ⇒ کاربر فقط یک
+    # خطایِ بی‌معنی می‌دید. حالا زود و تمیز None برمی‌گردانیم.
+    if not isinstance(url, str) or not url.strip():
+        logger.warning(f"get_video_formats: url نامعتبر/خالی است (user_id={user_id}) ⇒ None")
+        return None
+    url = url.strip()
     # ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ
     logger.info(f"🔍 [DEBUG] get_video_formats вызвана с параметрами:")
     logger.info(f"   url: {url}")

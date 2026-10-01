@@ -136,8 +136,17 @@ def _known_hosts() -> set:
     return hosts
 
 
+_FULL_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
 def _expand_schemeless_url(text: str) -> str:
-    """اولین لینکِ بدونِ اسکیم را https می‌کند و متنِ کامل را برمی‌گرداند (وگرنه '')."""
+    """اولین لینکِ بدونِ اسکیم را https می‌کند و متنِ کامل را برمی‌گرداند (وگرنه '').
+
+    خودسنجی: نتیجه باید حتماً یک «https://…» کاملِ بدونِ فاصله داشته باشد؛ وگرنه
+    سراغِ کاندیدِ بعدی می‌رویم. دلیلش یک حادثهٔ واقعیِ لاگ است: متنی که «https://»
+    داشت ولی لینکِ قابلِ استخراج نداشت ⇒ url=None به yt-dlp رسید و با
+    «'NoneType' object has no attribute 'lower'» سقوط کرد.
+    """
     if not text or ("http://" in text) or ("https://" in text):
         return ""
     known = _known_hosts()
@@ -145,9 +154,14 @@ def _expand_schemeless_url(text: str) -> str:
         host = (m.group(1) or "").lower()
         path = m.group(2) or ""
         bare_host = host.split(":")[0]
-        if path or host in known or bare_host in known:
-            start, end = m.span(1)
-            return text[:start] + "https://" + text[start:end] + text[end:]
+        if not (path or host in known or bare_host in known):
+            continue
+        start, end = m.span(1)
+        if start < 0 or end <= start:          # گروه شرکت نکرده ⇒ کاندیدِ بعدی
+            continue
+        candidate = text[:start] + "https://" + text[start:]
+        if _FULL_URL_RE.search(candidate):     # خودسنجیِ نتیجه
+            return candidate
     return ""
 
 
@@ -1263,6 +1277,20 @@ def url_distractor(app, message):
     except Exception as _bare_err:
         logger.error(f"URL_EXTRACTOR: schemeless expand failed: {_bare_err}")
     if ("https://" in final_text) or ("http://" in final_text):
+        # گاردِ لینکِ ناقص: اگر متن «http» دارد ولی لینکِ کاملِ قابلِ استخراج نه،
+        # هرگز url=None را به yt-dlp نده (سقوطِ «'NoneType' object has no
+        # attribute 'lower'» و پیامِ بی‌معنی برای کاربر). پیامِ روشن بده و برگرد.
+        try:
+            import re as _url_re
+            if not _url_re.search(r"https?://\S+", final_text):
+                logger.info("URL_EXTRACTOR: 'http' در متن هست ولی لینکِ کامل نه ⇒ INVALID_URL_MSG "
+                            "(text=%r)" % (final_text[:90],))
+                from HELPERS.safe_messeger import safe_send_message as _ssm
+                _ssm(message.chat.id, safe_get_messages(user_id).INVALID_URL_MSG,
+                     parse_mode=enums.ParseMode.HTML, message=message)
+                return
+        except Exception as _no_url_err:
+            logger.error(f"URL_EXTRACTOR: invalid-url guard failed: {_no_url_err}")
         if not is_user_blocked(message):
             # "Защита от дурака": ранний отказ для явно неподдерживаемых типов файлов
             try:

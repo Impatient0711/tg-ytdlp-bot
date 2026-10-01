@@ -108,6 +108,30 @@ def human_size(n) -> str:
         n /= 1024.0
 
 
+def _normalize_base(url) -> str:
+    """پاک‌سازیِ آدرسِ پایهٔ لینک‌ها: فاصله/خطِ جدید/اسکیمِ جاافتاده.
+
+    نمونهٔ واقعیِ دیپلویِ زنده: ``LINK_BASE_URL=dgdgdg.embezzle3131.dpdns.org``
+    (بدونِ ``https://``) ⇒ لینک‌های فایل **بی‌اسکیم** ساخته می‌شدند؛ در تلگرام
+    کلیک‌پذیرِ یکدست نبودند و وقتی کاربر همان متن را به ربات برمی‌گرداند،
+    استخراجِ لینک به حدسِ «لینکِ بدونِ اسکیم» می‌افتاد و گاهی url=None به
+    yt-dlp می‌رسید (سقوطِ «'NoneType' object has no attribute 'lower'»).
+    """
+    u = "".join(str(url or "").split())             # همهٔ فاصله/خطِ جدید حذف شود
+    u = u.strip().strip('"').strip("'").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):  # protocol-relative
+        u = "https:" + u
+    if "://" in u:
+        scheme, rest = u.split("://", 1)
+        if scheme.lower() not in ("http", "https"):  # ftp:// و … ⇒ همان https
+            u = "https://" + rest.lstrip("/")
+    else:
+        u = "https://" + u.lstrip("/")
+    return u.rstrip("/")
+
+
 def base_url(refresh: bool = False) -> str:
     """دامنهٔ عمومیِ سرویس (برای ساختنِ لینک)."""
     if not refresh and _URL_CACHE["base"] and time.time() - _URL_CACHE["at"] < 300:
@@ -117,10 +141,10 @@ def base_url(refresh: bool = False) -> str:
     if not url:
         dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
         if dom:
-            url = dom if dom.startswith("http") else "https://" + dom
+            url = dom
     if not url:
         url = _domain_from_api()
-    url = url.rstrip("/")
+    url = _normalize_base(url)
     if not url and base_url:
         pass
     _URL_CACHE["base"] = url

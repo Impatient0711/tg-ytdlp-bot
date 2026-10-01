@@ -522,6 +522,12 @@ def copy_cookies_to_download_dir(user_id, download_dir):
 
 def generate_download_dir_name(url):
     """Generate download directory name based on URL with minimal sanitization - only replace unsupported characters"""
+    # گاردِ ورودی: پیش‌تر url=None تا اینجا می‌آمد و دو خطایِ بی‌معنی می‌ساخت
+    # («startswith first arg must be bytes…» و «'NoneType' object has no attribute 'encode'»)
+    if not isinstance(url, str) or not url.strip():
+        logger.warning(f"generate_download_dir_name: url نامعتبر/خالی است ({url!r}) ⇒ 'unknown'")
+        return "unknown"
+    url = url.strip()
     try:
         from urllib.parse import urlparse
         import re

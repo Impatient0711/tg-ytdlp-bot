@@ -65,6 +65,10 @@ if [ "$DATA_DIR" != "$APP_DIR" ] && is_mount "$DATA_DIR"; then
 fi
 export DATA_DIR
 
+free_mb() {  # فضایِ آزادِ (مگابایت) فایل‌سیستمِ یک مسیر
+    df -Pm "$1" 2>/dev/null | awk 'NR==2 {print int($4)}'
+}
+
 persist_dir() {  # $1 = مسیر نسبی داخل /app (مثل users)
     local src="$APP_DIR/$1" dst="$DATA_DIR/$(basename "$1")"
     mkdir -p "$dst" 2>/dev/null
@@ -107,7 +111,39 @@ link_to_data() {  # فقط لینک (بدون ساختن فایل) — برای 
 
 mkdir -p "$DATA_DIR/users"
 if [ "$DATA_DIR" != "$APP_DIR" ]; then
-    persist_dir "users"
+    # ── دانلودها روی کدام دیسک؟ ─────────────────────────────────────────────
+    # فایل‌های دانلودی **موقتی**‌اند (بعدِ آپلود به تلگرام پاک می‌شوند)، ولی والیومِ
+    # ریلوی اغلب کوچک است (پیش‌فرضِ ۵۰۰MB و بزرگ‌کردنش هم سقف دارد) درحالی‌که دیسکِ
+    # خودِ کانتینر گیگابایت‌ها جایِ آزاد دارد. اگر users/ روی والیومِ کوچک باشد، هر
+    # دانلودِ چندصد‌مگابایتی با «❌ فضای دیسک کافی نیست» رد می‌شود.
+    # پس: دادهٔ **ماندگار** (session/کوکی/کش/لینک‌های فایل/لاگ) روی والیوم،
+    #     دانلودهای **موقتی** روی دیسکِ بزرگ‌تر.
+    # رفتارِ قدیم (users روی والیوم، برای ماندنِ .part بین دیپلوی‌ها): PERSIST_USERS=1
+    vol_free=$(free_mb "$DATA_DIR")
+    app_free=$(free_mb "$APP_DIR")
+    users_on_volume=1
+    case "$(printf '%s' "${PERSIST_USERS:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on)  users_on_volume=1 ;;
+        0|false|no|off) users_on_volume=0 ;;
+        *)
+            if [ "${vol_free:-0}" -lt 4096 ] && [ "${app_free:-0}" -gt $(( 2 * ${vol_free:-0} + 1024 )) ]; then
+                users_on_volume=0
+            fi
+            ;;
+    esac
+    if [ "$users_on_volume" = "1" ]; then
+        persist_dir "users"
+        log "📁 دانلودها روی والیوم: $APP_DIR/users → $DATA_DIR/users (آزاد: ${vol_free:-?}MB)"
+    else
+        [ -L "$APP_DIR/users" ] && rm -f "$APP_DIR/users"
+        mkdir -p "$APP_DIR/users"
+        if [ "$PERSIST" = "1" ] && [ -d "$DATA_DIR/users" ]; then
+            old_mb=$(du -sm "$DATA_DIR/users" 2>/dev/null | awk '{print int($1)}')
+            rm -rf "$DATA_DIR/users" 2>/dev/null || true
+            log "🧹 ${old_mb:-0}MB ماندهٔ دانلود از والیوم پاک شد (users/ موقتی است)"
+        fi
+        log "📁 دانلودها روی دیسکِ کانتینر: $APP_DIR/users (آزاد: ${app_free:-?}MB) — والیومِ ${vol_free:-?}MB فقط برای دادهٔ ماندگار"
+    fi
     link_to_data "magic.session"
     persist_file "dump.json" "{}"
     persist_file "TXT/cookie.txt" ""

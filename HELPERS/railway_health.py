@@ -172,7 +172,9 @@ def _announce_token(token: str) -> None:
             break
     if not host:
         dom = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
-        host = ("https://" + dom) if dom else ""
+        host = dom
+    if host and not host.startswith("http"):
+        host = "https://" + host.lstrip("/")
     text = ("🔑 توکنِ عیب‌یابیِ ربات (برای خواندنِ لاگ از راهِ دور):\n"
             "<code>%s</code>\n\n%s"
             % (token,
