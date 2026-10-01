@@ -388,6 +388,15 @@ class _Cancelled(Exception):
     pass
 
 
+class _HttpError(Exception):
+    """سرور با کدِ ۴xx/۵xx جواب داد (لینکِ مرده/منقضی/بدونِ دسترسی)."""
+
+    def __init__(self, status: int, body: str = ""):
+        super().__init__(f"HTTP {status}")
+        self.status = int(status)
+        self.body = (body or "")[:400]
+
+
 class _TooBig(Exception):
     pass
 
@@ -520,6 +529,7 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
             done = True
         if not done:
             # منابعِ ممکن: سرورِ محلیِ خودِ ربات (اگر لینک ‎/d/...‎ باشد) و بعد آدرسِ اصلی
+            _last_http_err = None
             _cands = local_mirror_urls(url) if _env_bool("DIRECT_LINK_LOCAL_MIRROR", True) else []
             if url not in _cands:
                 _cands.append(url)
@@ -540,8 +550,12 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
                     if r.status_code == 200 and "Range" in _hdrs:
                         pos = 0                                   # سرور Range را پشتیبانی نکرد
                     if r.status_code not in (200, 206):
+                        try:
+                            _body = (r.text or "")[:400]
+                        except Exception:
+                            _body = ""
                         r.close()
-                        raise RuntimeError(f"HTTP {r.status_code}")
+                        raise _HttpError(r.status_code, _body)
                     if r.status_code == 206 and pos:
                         # اگر سرور از بایتِ درخواستی شروع نکرد، دوباره از صفر بنویس
                         cont = (r.headers.get("Content-Range") or "").strip()
@@ -583,8 +597,35 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
                 except Exception as _cand_err:
                     if _idx < len(_cands) - 1:
                         logger.warning(f"[DIRECT] source failed ({_cand}): {_cand_err} → trying next source")
+                        if isinstance(_cand_err, _HttpError):
+                            _last_http_err = _cand_err     # برای پیامِ پایانی
                         continue
                     raise
+        if not done and _last_http_err is not None:
+            raise _last_http_err
+    except _HttpError as exc:
+        # لینکِ مرده/منقضی/بدونِ دسترسی: «ادامه» معنی ندارد ⇒ پیامِ روشن و تمام
+        clear(user_id)
+        _hint = "لینک را چک کن (ممکن است منقضی یا نیازمندِ کوکی/هدر باشد)."
+        if _filelink_parts(url) and exc.status in (404, 410):
+            _hint = ("این لینکِ فایل منقضی شده یا روی سرورِ دیگری ساخته شده "
+                     "(رکوردش روی این سرور نیست).\n"
+                     "👈 همان فایل را دوباره برایم بفرست تا لینکِ تازه بسازم.")
+        _txt = (f"❌ دانلود نشد — سرور گفت <code>HTTP {exc.status}</code>\n{_hint}")
+        logger.info(f"[DIRECT] HTTP {exc.status} for {user_id}: {url[:80]} | body={exc.body[:120]!r}")
+        try:
+            if msg_id:
+                safe_edit_message_text(user_id, msg_id, _txt, parse_mode="html", reply_markup=None)
+            else:
+                safe_send_message(user_id, _txt, parse_mode="html", message=message)
+        except Exception:
+            pass
+        try:
+            if target_path and os.path.exists(target_path) and os.path.getsize(target_path) == 0:
+                os.remove(target_path)
+        except Exception:
+            pass
+        return False
     except _Cancelled:
         logger.info(f"[DIRECT] cancelled by user {user_id}: {url[:80]}")
         clear(user_id)
@@ -609,15 +650,22 @@ def download_direct(app, message, url: str, user_id: int, kind_hint: str = "") -
         if _http_msg.startswith("HTTP 4"):
             # لینک اشتباه/منقضی/بدونِ دسترسی: چیزی برای «ادامه» نیست
             clear(user_id)
+            # لینکِ ‎/d/<token>‎ که ۴۰۴ می‌دهد ⇒ یا منقضی شده یا روی سرورِ دیگری
+            # (یک دیپلویِ دیگرِ همان ربات) ساخته شده و رکوردش اینجا نیست.
+            _hint = "لینک را چک کن (ممکن است منقضی یا نیازمندِ کوکی/هدر باشد)."
+            if _filelink_parts(url) and _http_msg.startswith("HTTP 404"):
+                _hint = ("این لینکِ فایل منقضی شده یا روی سرورِ دیگری ساخته شده "
+                         "(رکوردش روی این سرور نیست).\n"
+                         "👈 همان فایل را دوباره برایم بفرست تا لینکِ تازه بسازم.")
             try:
                 if msg_id:
                     safe_edit_message_text(user_id, msg_id,
                                            f"❌ دانلود نشد — سرور گفت <code>{html.escape(_http_msg)}</code>\n"
-                                           f"لینک را چک کن (ممکن است منقضی یا نیازمندِ کوکی/هدر باشد).",
+                                           f"{_hint}",
                                            parse_mode="html", reply_markup=None)
                 else:
                     safe_send_message(user_id,
-                                      f"❌ دانلود نشد — سرور گفت <code>{html.escape(_http_msg)}</code>",
+                                      f"❌ دانلود نشد — سرور گفت <code>{html.escape(_http_msg)}</code>\n{_hint}",
                                       parse_mode="html", message=message)
             except Exception:
                 pass
